@@ -639,8 +639,10 @@ export const useBLE = () => {
 
   // Monitor connection state changes more proactively
   useEffect(() => {
+    let monitorInterval: NodeJS.Timeout | null = null;
+
     if (state.connectionStatus === 'connected' && state.connectedDeviceId) {
-      const monitorInterval = setInterval(async () => {
+      monitorInterval = setInterval(async () => {
         try {
           if (bleManagerRef.current && state.connectedDeviceId) {
             // Use BleManager to check if device is connected
@@ -670,6 +672,7 @@ export const useBLE = () => {
           // Clear the device reference
           connectedDeviceRef.current = null;
           
+          // Update state to reflect disconnection
           setState(prev => ({
             ...prev,
             connectedDeviceId: null,
@@ -679,12 +682,14 @@ export const useBLE = () => {
           }));
         }
       }, 2000); // Check every 2 seconds
-
-      // Cleanup function
-      return () => {
-        clearInterval(monitorInterval);
-      };
     }
+
+    // Cleanup function
+    return () => {
+      if (monitorInterval) {
+        clearInterval(monitorInterval);
+      }
+    };
   }, [state.connectionStatus, state.connectedDeviceId]);
 
   // RSSI reading loop - reads RSSI from connected device every 300-500ms
@@ -698,27 +703,42 @@ export const useBLE = () => {
           // Use the device instance from the ref (not from state)
           const deviceInstance = connectedDeviceRef.current;
           
-          // Guard: Check if device exists and is connected before reading RSSI
-          if (deviceInstance) {
-            // Read RSSI from connected device (MUST use device.readRSSI())
-            const rssiResult = await deviceInstance.readRSSI();
-            // Extract the RSSI value from the result
-            const rssiValue = typeof rssiResult === 'object' && rssiResult.hasOwnProperty('rssi')
-              ? rssiResult.rssi
-              : rssiResult;
-
-            // Update the device's RSSI property in the scannedDevices array for UI display
-            setState(prev => ({
-              ...prev,
-              scannedDevices: prev.scannedDevices.map(d => 
-                d.id === deviceInstance.id ? {...d, rssi: rssiValue} : d
-              ),
-              rssiUpdateCounter: prev.rssiUpdateCounter + 1
-            }));
+          // GUARD: Check if device exists and is connected before reading RSSI
+          if (!deviceInstance) {
+            console.log('No device instance available, stopping RSSI polling');
+            clearInterval(rssiIntervalId);
+            return;
           }
+          
+          // GUARD: Check if device is actually connected before reading RSSI
+          const isConnected = await deviceInstance.isConnected();
+          if (!isConnected) {
+            console.log('Device is not connected, stopping RSSI polling');
+            clearInterval(rssiIntervalId);
+            return;
+          }
+
+          // Read RSSI from connected device (MUST use device.readRSSI())
+          const rssiResult = await deviceInstance.readRSSI();
+          // Extract the RSSI value from the result
+          const rssiValue = typeof rssiResult === 'object' && rssiResult.hasOwnProperty('rssi')
+            ? rssiResult.rssi
+            : rssiResult;
+
+          // Update the device's RSSI property in the scannedDevices array for UI display
+          setState(prev => ({
+            ...prev,
+            scannedDevices: prev.scannedDevices.map(d => 
+              d.id === deviceInstance.id ? {...d, rssi: rssiValue} : d
+            ),
+            rssiUpdateCounter: prev.rssiUpdateCounter + 1
+          }));
         } catch (error) {
-          // Silently handle RSSI reading errors to keep the loop running
-          console.log(`RSSI reading error: ${(error as Error).message}`);
+          // Stop RSSI polling on error to prevent "Unknown error occurred" spam
+          console.log(`RSSI reading error, stopping polling: ${(error as Error).message}`);
+          if (rssiIntervalId) {
+            clearInterval(rssiIntervalId);
+          }
         }
       }, 500); // Read RSSI every 500ms (within 300-500ms range)
     }
@@ -835,6 +855,45 @@ export const useBLE = () => {
       subscription.remove();
     };
   }, [state.connectionStatus, state.connectedDevice, state.isScanning, startScan, addLog, managerInitialized]);
+
+  // Monitor Bluetooth state changes - SINGLE subscription with proper cleanup
+  useEffect(() => {
+    if (!bleManagerRef.current || !managerInitialized) {
+      return;
+    }
+
+    let lastBluetoothState: string | null = null;
+    
+    const subscription = bleManagerRef.current.onStateChange((bluetoothState) => {
+      // Only log if state actually changed to prevent spam
+      if (bluetoothState !== lastBluetoothState) {
+        console.log('Bluetooth state changed to:', bluetoothState);
+        lastBluetoothState = bluetoothState;
+        
+        // Update the state with the current Bluetooth state
+        setState(prev => ({ ...prev, bluetoothState }));
+
+        if (bluetoothState === 'PoweredOn') {
+          addLog('Bluetooth is powered on. Ready to scan when user initiates.');
+        } else if (bluetoothState !== 'PoweredOn' && state.connectionStatus === 'connected') {
+          // If Bluetooth is turned off while connected, update the state
+          setState(prev => ({
+            ...prev,
+            connectionStatus: 'disconnected',
+            connectedDeviceId: null,
+            ledStatus: { ...prev.ledStatus, btConnected: false }
+          }));
+          addLog(`Bluetooth turned off. Connection status: ${bluetoothState}`);
+        }
+      }
+    }, true);
+
+    // Cleanup function
+    return () => {
+      subscription.remove();
+      lastBluetoothState = null;
+    };
+  }, [state.connectionStatus, state.connectedDeviceId, state.isScanning, startScan, addLog, managerInitialized]);
 
   // Load saved device on mount but don't start scanning automatically
   useEffect(() => {
