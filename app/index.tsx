@@ -93,7 +93,7 @@ export default function Index() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
-    if (state.connectionStatus === 'connected' && state.connectedDevice) {
+    if (state.connectionStatus === 'connected' && state.connectedDeviceId) {
       intervalId = setInterval(() => {
         setRealTimeSignalTimestamp(new Date());
       }, 1000);
@@ -104,7 +104,7 @@ export default function Index() {
         clearInterval(intervalId);
       }
     };
-  }, [state.connectionStatus, state.connectedDevice]);
+  }, [state.connectionStatus, state.connectedDeviceId]);
 
   // Note: Scanning stops automatically when connecting to a device
 
@@ -152,9 +152,9 @@ export default function Index() {
             <Text style={styles.debugText}>BT Connected: {state.ledStatus.btConnected ? 'Yes' : 'No'}</Text>
             <Text style={styles.debugText}>Ready: {state.ledStatus.ready ? 'Yes' : 'No'}</Text>
             <Text style={styles.debugText}>WiFi: {state.ledStatus.wifi ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDevice && state.savedDevice.id === state.connectedDevice.id) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
+            <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
             <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
-            <Text style={styles.debugText}>Connected Device ID: {state.connectedDevice?.id || 'None'}</Text>
+            <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
           </View>
         </View>
 
@@ -174,80 +174,118 @@ export default function Index() {
               </Text>
             </Text>
 
-            {state.connectedDevice && (
+            {state.connectedDeviceId && (
               <>
-                <Text style={styles.deviceName}>
-                  Device: {state.connectedDevice.name || 'Unknown Device'}
-                </Text>
-                <Text style={styles.deviceAddress}>
-                  ID: {state.connectedDevice.id}
-                </Text>
-                <Text style={styles.deviceRssi}>
-                  RSSI: {state.connectedDevice.rssi !== undefined && state.connectedDevice.rssi !== null ? `${state.connectedDevice.rssi} dBm` : 'N/A'}
-                </Text>
-                <Text style={styles.deviceMtu}>
-                  MTU: {state.connectedDevice.mtu ? `${state.connectedDevice.mtu}` : 'N/A'}
-                </Text>
+                {(() => {
+                  // Find the connected device in the scanned devices array to get its details
+                  const connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                  return connectedDevice ? (
+                    <>
+                      <Text style={styles.deviceName}>
+                        Device: {connectedDevice.name || 'Unknown Device'}
+                      </Text>
+                      <Text style={styles.deviceAddress}>
+                        ID: {connectedDevice.id}
+                      </Text>
+                      <Text style={styles.deviceRssi}>
+                        RSSI: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}
+                      </Text>
+                      <Text style={styles.deviceMtu}>
+                        MTU: {connectedDevice.mtu ? `${connectedDevice.mtu}` : 'N/A'}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.deviceName}>
+                        Device: Unknown Device
+                      </Text>
+                      <Text style={styles.deviceAddress}>
+                        ID: {state.connectedDeviceId}
+                      </Text>
+                      <Text style={styles.deviceRssi}>
+                        RSSI: N/A
+                      </Text>
+                      <Text style={styles.deviceMtu}>
+                        MTU: N/A
+                      </Text>
+                    </>
+                  );
+                })()}
               </>
             )}
           </View>
           {/* Real-time Signal Strength Display */}
-          {state.connectionStatus === 'connected' && state.connectedDevice && (
+          {state.connectionStatus === 'connected' && state.connectedDeviceId && (
             <View style={styles.signalStrengthContainer}>
-              <Text style={styles.signalStrengthTitle}>Signal Strength:</Text>
-              <View style={styles.signalStrengthBar}>
-                <View
-                  style={[
-                    styles.signalStrengthFill,
-                    {
-                      width: `${Math.min(100, Math.max(0, ((state.connectedDevice.rssi || -100) + 100)))}%`,
-                      backgroundColor: getSignalColor(state.connectedDevice.rssi || -100)
-                    }
-                  ]}
-                />
-              </View>
-              <Text style={styles.signalStrengthValue}>
-                {state.connectedDevice.rssi !== undefined && state.connectedDevice.rssi !== null ? `${state.connectedDevice.rssi} dBm` : 'N/A'}
-              </Text>
+              {(() => {
+                // Find the connected device in the scanned devices array to get its details
+                const connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                return connectedDevice ? (
+                  <>
+                    <Text style={styles.signalStrengthTitle}>Signal Strength:</Text>
+                    <View style={styles.signalStrengthBar}>
+                      <View
+                        style={[
+                          styles.signalStrengthFill,
+                          {
+                            width: `${Math.min(100, Math.max(0, ((connectedDevice.rssi || -100) + 100)))}%`,
+                            backgroundColor: getSignalColor(connectedDevice.rssi || -100)
+                          }
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.signalStrengthValue}>
+                      {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}
+                    </Text>
 
-              {/* Real-time Signal Debug Information */}
-              <View style={styles.realTimeSignalDebug}>
-                <Text style={styles.realTimeSignalDebugTitle}>Real-time Signal Debug:</Text>
-                <Text style={styles.realTimeSignalDebugText}>Last Updated: {realTimeSignalTimestamp.toLocaleTimeString()}</Text>
-                <Text style={styles.realTimeSignalDebugText}>Current RSSI: {state.connectedDevice.rssi !== undefined && state.connectedDevice.rssi !== null ? `${state.connectedDevice.rssi} dBm` : 'N/A'}</Text>
-                <Text style={styles.realTimeSignalDebugText}>Signal Level: {state.connectedDevice.rssi !== undefined && state.connectedDevice.rssi !== null ?
-                  (state.connectedDevice.rssi >= -50 ? 'Excellent' :
-                   state.connectedDevice.rssi >= -60 ? 'Good' :
-                   state.connectedDevice.rssi >= -70 ? 'Fair' :
-                   'Poor') : 'N/A'}</Text>
-                <Text style={styles.realTimeSignalDebugText}>Distance Estimation: {state.connectedDevice.rssi !== undefined && state.connectedDevice.rssi !== null ?
-                  (state.connectedDevice.rssi >= -50 ? 'Very Close' :
-                   state.connectedDevice.rssi >= -60 ? 'Close' :
-                   state.connectedDevice.rssi >= -70 ? 'Medium' :
-                   'Far') : 'N/A'}</Text>
-              </View>
+                    {/* Real-time Signal Debug Information */}
+                    <View style={styles.realTimeSignalDebug} key={`rssi-debug-${state.rssiUpdateCounter}`}>
+                      <Text style={styles.realTimeSignalDebugTitle}>Real-time Signal Debug:</Text>
+                      <Text style={styles.realTimeSignalDebugText}>Last Updated: {realTimeSignalTimestamp.toLocaleTimeString()}</Text>
+                      <Text style={styles.realTimeSignalDebugText} key={`rssi-value-${state.rssiUpdateCounter}`}>Current RSSI: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}</Text>
+                      <Text style={styles.realTimeSignalDebugText} key={`signal-level-${state.rssiUpdateCounter}`}>Signal Level: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ?
+                        (connectedDevice.rssi >= -50 ? 'Excellent' :
+                         connectedDevice.rssi >= -60 ? 'Good' :
+                         connectedDevice.rssi >= -70 ? 'Fair' :
+                         'Poor') : 'N/A'}</Text>
+                      <Text style={styles.realTimeSignalDebugText} key={`distance-est-${state.rssiUpdateCounter}`}>Distance Estimation: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ?
+                        (connectedDevice.rssi >= -50 ? 'Very Close' :
+                         connectedDevice.rssi >= -60 ? 'Close' :
+                         connectedDevice.rssi >= -70 ? 'Medium' :
+                         'Far') : 'N/A'}</Text>
+                    </View>
+                  </>
+                ) : null;
+              })()}
             </View>
           )}
           {/* Debug Logs for Connection Status */}
           <View style={styles.debugSection}>
             <Text style={styles.debugTitle}>Debug:</Text>
             <Text style={styles.debugText}>Connection Status: {state.connectionStatus}</Text>
-            <Text style={styles.debugText}>Connected Device ID: {state.connectedDevice?.id || 'None'}</Text>
-            <Text style={styles.debugText}>Connected Device Name: {state.connectedDevice?.name || 'None'}</Text>
-            <Text style={styles.debugText}>Connected Device RSSI: {state.connectedDevice?.rssi !== undefined && state.connectedDevice?.rssi !== null ? `${state.connectedDevice.rssi} dBm` : 'N/A'}</Text>
-            <Text style={styles.debugText}>Signal Strength Level: {state.connectedDevice?.rssi !== undefined && state.connectedDevice?.rssi !== null ?
-              (state.connectedDevice.rssi >= -50 ? 'Excellent' :
-               state.connectedDevice.rssi >= -60 ? 'Good' :
-               state.connectedDevice.rssi >= -70 ? 'Fair' :
-               'Poor') : 'N/A'}</Text>
-            <Text style={styles.debugText}>Signal Quality: {state.connectedDevice?.rssi !== undefined && state.connectedDevice?.rssi !== null ?
-              (() => {
-                const rssi = state.connectedDevice.rssi;
-                if (rssi >= -50) return 'Strong (>= -50 dBm)';
-                if (rssi >= -60) return 'Good (-50 to -60 dBm)';
-                if (rssi >= -70) return 'Fair (-60 to -70 dBm)';
-                return 'Weak (< -70 dBm)';
-              })() : 'N/A'}</Text>
+            <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
+            {(() => {
+              const connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+              return (
+                <>
+                  <Text style={styles.debugText}>Connected Device Name: {connectedDevice?.name || 'None'}</Text>
+                  <Text style={styles.debugText}>Connected Device RSSI: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}</Text>
+                  <Text style={styles.debugText}>Signal Strength Level: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ?
+                    (connectedDevice.rssi >= -50 ? 'Excellent' :
+                     connectedDevice.rssi >= -60 ? 'Good' :
+                     connectedDevice.rssi >= -70 ? 'Fair' :
+                     'Poor') : 'N/A'}</Text>
+                  <Text style={styles.debugText}>Signal Quality: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ?
+                    (() => {
+                      const rssi = connectedDevice.rssi;
+                      if (rssi >= -50) return 'Strong (>= -50 dBm)';
+                      if (rssi >= -60) return 'Good (-50 to -60 dBm)';
+                      if (rssi >= -70) return 'Fair (-60 to -70 dBm)';
+                      return 'Weak (< -70 dBm)';
+                    })() : 'N/A'}</Text>
+                </>
+              );
+            })()}
           </View>
         </View>
 
@@ -276,7 +314,7 @@ export default function Index() {
                         <Text style={styles.buttonText}>Connect to Saved Device</Text>
                       </TouchableOpacity>
 
-                      {state.connectionStatus === 'connected' && state.savedDevice && state.connectedDevice && state.savedDevice.id === state.connectedDevice.id && (
+                      {state.connectionStatus === 'connected' && state.savedDevice && state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId && (
                         <TouchableOpacity
                           style={styles.dangerButton}
                           onPress={disconnectFromDevice}
@@ -311,7 +349,7 @@ export default function Index() {
             <Text style={styles.debugText}>Saved Device Name: {state.savedDevice?.name || 'None'}</Text>
             <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
             <Text style={styles.debugText}>Saved Device RSSI: {state.savedDevice?.rssi ? `${state.savedDevice.rssi} dBm` : 'None'}</Text>
-            <Text style={styles.debugText}>Saved Device Matches Connected: {(state.savedDevice && state.connectedDevice && state.savedDevice.id === state.connectedDevice.id) ? 'Yes' : 'No'}</Text>
+            <Text style={styles.debugText}>Saved Device Matches Connected: {(state.savedDevice && state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) ? 'Yes' : 'No'}</Text>
             <Text style={styles.debugText}>Saved Device in Scan List: {(state.savedDevice && state.scannedDevices.some(d => d.id === state.savedDevice.id)) ? 'Yes' : 'No'}</Text>
           </View>
         </View>
@@ -433,7 +471,7 @@ export default function Index() {
             <View style={styles.debugSection}>
               <Text style={styles.debugTitle}>Debug:</Text>
               <Text style={styles.debugText}>Contact Status: {state.contactStatus ? 'ON' : 'OFF'}</Text>
-              <Text style={styles.debugText}>Connected Device: {state.connectedDevice?.name || 'None'}</Text>
+              <Text style={styles.debugText}>Connected Device: {state.scannedDevices.find(d => d.id === state.connectedDeviceId)?.name || 'None'}</Text>
             </View>
           </View>
         )}
