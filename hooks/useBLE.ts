@@ -339,8 +339,20 @@ export const useBLE = () => {
 
   // Connect to a specific device
   const connectToDevice = useCallback(async (device: Device) => {
+    // Guard: Prevent connecting if already connected or connecting
     if (state.connectionStatus !== 'disconnected') {
-      addLog('Already connected to a device');
+      addLog('Already connected or connecting to a device');
+      
+      // If we're trying to connect to a different device, cancel the current connection first
+      if (state.connectedDeviceId && state.connectedDeviceId !== device.id) {
+        try {
+          if (bleManagerRef.current) {
+            await bleManagerRef.current.cancelDeviceConnection(state.connectedDeviceId);
+          }
+        } catch (cancelError) {
+          addLog(`Error canceling previous connection: ${(cancelError as Error).message}`);
+        }
+      }
       return;
     }
 
@@ -364,8 +376,22 @@ export const useBLE = () => {
     addLog(`Connecting to ${device.name || device.id}...`);
 
     try {
-      // Connect to the device - using the built-in timeout option
-      const connectedDevice = await bleManagerRef.current!.connectToDevice(device.id, { timeout: 15000 });
+      // Guard: Check if device is already connected before attempting connection
+      try {
+        const isAlreadyConnected = await bleManagerRef.current.isDeviceConnected(device.id);
+        if (isAlreadyConnected) {
+          addLog(`Device ${device.id} is already connected`);
+          // Cancel the connection attempt if it's somehow already connected
+          await bleManagerRef.current.cancelDeviceConnection(device.id);
+        }
+      } catch (checkError) {
+        // Ignore errors during connection check, just proceed with connection
+        addLog(`Connection check failed (this is OK): ${(checkError as Error).message}`);
+      }
+
+      // Connect to the device using the device instance (not just the ID)
+      // Using shorter timeout to prevent hanging
+      const connectedDevice = await device.connect({ timeout: 8000, autoConnect: false });
 
       // Verify the device is actually connected before proceeding
       const isConnected = await connectedDevice.isConnected();
@@ -769,7 +795,7 @@ export const useBLE = () => {
     if (state.autoConnectEnabled &&
         state.savedDevice &&
         state.scannedDevices.length > 0 &&
-        !state.connectedDeviceId) { // Only attempt auto-connect if not already connected
+        state.connectionStatus === 'disconnected') { // Only attempt auto-connect if not already connected
 
       const savedDeviceFound = state.scannedDevices.find(device => device.id === state.savedDevice!.id);
       if (savedDeviceFound) {
@@ -777,7 +803,7 @@ export const useBLE = () => {
         connectToDevice(savedDeviceFound);
       }
     }
-  }, [state.autoConnectEnabled, state.savedDevice, state.scannedDevices, state.connectedDeviceId, connectToDevice]);
+  }, [state.autoConnectEnabled, state.savedDevice, state.scannedDevices, state.connectionStatus, connectToDevice]);
 
   // Monitor Bluetooth state changes
   useEffect(() => {
