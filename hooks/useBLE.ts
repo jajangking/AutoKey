@@ -627,26 +627,33 @@ export const useBLE = () => {
     const subscription = bleManagerRef.current.onDeviceDisconnected(
       state.connectedDeviceId || '', // Device ID to listen for disconnection
       (error: BleError | null, device: Device) => {
-        console.log('Device disconnected event triggered:', device.id, 'Expected:', state.connectedDeviceId);
-        if (device.id === state.connectedDeviceId) {
-          addLog(`Device disconnected: ${device.name || device.id}`);
-          // Clear the device reference
-          connectedDeviceRef.current = null;
-          // Update saved devices to reflect disconnection
-          setState(prev => ({
-            ...prev,
-            connectedDeviceId: null,
-            connectionStatus: 'disconnected',
-            ledStatus: { btConnected: false, ready: false, wifi: false },
-            contactStatus: false
-          }));
+        if (error) {
+          // Handle disconnection error
+          const errorMessage = `Device disconnection error: ${error.message}`;
+          addLog(errorMessage);
+          ErrorHandler.handleError(ErrorType.DISCONNECTED, errorMessage, error);
+        } else {
+          console.log('Device disconnected event triggered:', device.id, 'Expected:', state.connectedDeviceId);
+          if (device.id === state.connectedDeviceId) {
+            addLog(`Device disconnected: ${device.name || device.id}`);
+            // Clear the device reference
+            connectedDeviceRef.current = null;
+            // Update saved devices to reflect disconnection
+            setState(prev => ({
+              ...prev,
+              connectedDeviceId: null,
+              connectionStatus: 'disconnected',
+              ledStatus: { btConnected: false, ready: false, wifi: false },
+              contactStatus: false
+            }));
 
-          // Automatically start scanning again after a delay if auto-connect is enabled
-          if (state.autoConnectEnabled) {
-            setTimeout(() => {
-              addLog('Auto-connect enabled: starting scan after disconnection');
-              startScan();
-            }, 2000);
+            // Automatically start scanning again after a delay if auto-connect is enabled
+            if (state.autoConnectEnabled) {
+              setTimeout(() => {
+                addLog('Auto-connect enabled: starting scan after disconnection');
+                startScan();
+              }, 2000);
+            }
           }
         }
       }
