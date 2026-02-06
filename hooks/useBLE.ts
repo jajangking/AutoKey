@@ -405,7 +405,7 @@ export const useBLE = () => {
 
         // Store the actual device instance in the ref (not in state)
         connectedDeviceRef.current = connectedDevice;
-        
+
         // Update state with only the device ID (not the full device object)
         // Also ensure the connected device is in the scannedDevices array
         setState(prev => ({
@@ -414,7 +414,9 @@ export const useBLE = () => {
           connectionStatus: 'connected',
           ledStatus: { ...prev.ledStatus, btConnected: true },
           scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
-            ? prev.scannedDevices // Device already in array, don't duplicate
+            ? prev.scannedDevices.map(d => 
+                d.id === connectedDevice.id ? {...connectedDevice, rssi: d.rssi} : d
+              ) // Update existing device with fresh data but preserve RSSI if available
             : [...prev.scannedDevices, connectedDevice] // Add device to array
         }));
 
@@ -428,7 +430,7 @@ export const useBLE = () => {
         // Still consider it connected if the connection succeeded, even if service discovery failed
         // Store the actual device instance in the ref (not in state)
         connectedDeviceRef.current = connectedDevice;
-        
+
         // Update state with only the device ID (not the full device object)
         // Also ensure the connected device is in the scannedDevices array
         setState(prev => ({
@@ -437,7 +439,9 @@ export const useBLE = () => {
           connectionStatus: 'connected',
           ledStatus: { ...prev.ledStatus, btConnected: true },
           scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
-            ? prev.scannedDevices // Device already in array, don't duplicate
+            ? prev.scannedDevices.map(d => 
+                d.id === connectedDevice.id ? {...connectedDevice, rssi: d.rssi} : d
+              ) // Update existing device with fresh data but preserve RSSI if available
             : [...prev.scannedDevices, connectedDevice] // Add device to array
         }));
 
@@ -451,6 +455,17 @@ export const useBLE = () => {
         connectedDeviceId: null, // Ensure connectedDeviceId is null on failure
         ledStatus: { ...prev.ledStatus, btConnected: false }
       }));
+
+      // If auto-connect is enabled, restart scanning to try again when device becomes available
+      if (state.autoConnectEnabled && state.savedDevice) {
+        addLog('Auto-connect enabled: restarting scan after connection failure');
+        setTimeout(() => {
+          // Only start scanning if not already connected and not currently scanning
+          if (state.connectionStatus === 'disconnected' && !state.isScanning) {
+            startScan();
+          }
+        }, 3000); // Wait 3 seconds before retrying
+      }
     }
   }, [state.connectionStatus, state.isScanning, addLog, managerInitialized]);
 
@@ -624,10 +639,13 @@ export const useBLE = () => {
             contactStatus: false
           }));
 
-          // Automatically start scanning again after a delay
-          setTimeout(() => {
-            startScan();
-          }, 2000);
+          // Automatically start scanning again after a delay if auto-connect is enabled
+          if (state.autoConnectEnabled) {
+            setTimeout(() => {
+              addLog('Auto-connect enabled: starting scan after disconnection');
+              startScan();
+            }, 2000);
+          }
         }
       }
     );
@@ -662,6 +680,14 @@ export const useBLE = () => {
                 ledStatus: { btConnected: false, ready: false, wifi: false },
                 contactStatus: false
               }));
+
+              // Automatically start scanning again after a delay if auto-connect is enabled
+              if (state.autoConnectEnabled) {
+                setTimeout(() => {
+                  addLog('Auto-connect enabled: starting scan after connection status monitor detected disconnection');
+                  startScan();
+                }, 2000);
+              }
             }
           }
         } catch (error) {
@@ -680,6 +706,14 @@ export const useBLE = () => {
             ledStatus: { btConnected: false, ready: false, wifi: false },
             contactStatus: false
           }));
+
+          // Automatically start scanning again after a delay if auto-connect is enabled
+          if (state.autoConnectEnabled) {
+            setTimeout(() => {
+              addLog('Auto-connect enabled: starting scan after connection status error');
+              startScan();
+            }, 2000);
+          }
         }
       }, 2000); // Check every 2 seconds
     }
@@ -728,9 +762,13 @@ export const useBLE = () => {
           // Update the device's RSSI property in the scannedDevices array for UI display
           setState(prev => ({
             ...prev,
-            scannedDevices: prev.scannedDevices.map(d => 
+            scannedDevices: prev.scannedDevices.map(d =>
               d.id === deviceInstance.id ? {...d, rssi: rssiValue} : d
             ),
+            // Also update the saved device RSSI if this is the connected device
+            savedDevice: prev.savedDevice && prev.savedDevice.id === deviceInstance.id 
+              ? {...prev.savedDevice, rssi: rssiValue} 
+              : prev.savedDevice,
             rssiUpdateCounter: prev.rssiUpdateCounter + 1
           }));
         } catch (error) {
@@ -755,22 +793,41 @@ export const useBLE = () => {
   useEffect(() => {
     let connectionMonitorId: NodeJS.Timeout | null = null;
 
-    if (state.connectedDevice && state.connectionStatus === 'connected') {
+    if (connectedDeviceRef.current && state.connectionStatus === 'connected') {
       // Start monitoring connection status separately
       connectionMonitorId = setInterval(async () => {
         try {
-          if (bleManagerRef.current && state.connectedDevice) {
-            const isConnected = await state.connectedDevice.isConnected();
-            if (!isConnected) {
-              addLog(`Connected device ${state.connectedDevice.name || state.connectedDevice.id} is no longer connected`);
-              // Update state to reflect disconnection
-              setState(prev => ({
-                ...prev,
-                connectedDevice: null,
-                connectionStatus: 'disconnected',
-                ledStatus: { btConnected: false, ready: false, wifi: false },
-                contactStatus: false
-              }));
+          // Use the device instance from the ref (not from state)
+          const deviceInstance = connectedDeviceRef.current;
+
+          // GUARD: Check if device exists
+          if (!deviceInstance) {
+            console.log('No device instance available in connection monitor, stopping monitor');
+            if (connectionMonitorId) {
+              clearInterval(connectionMonitorId);
+            }
+            return;
+          }
+
+          const isConnected = await deviceInstance.isConnected();
+          if (!isConnected) {
+            addLog(`Connected device ${deviceInstance.name || deviceInstance.id} is no longer connected`);
+            
+            // Update state to reflect disconnection
+            setState(prev => ({
+              ...prev,
+              connectedDeviceId: null,
+              connectionStatus: 'disconnected',
+              ledStatus: { btConnected: false, ready: false, wifi: false },
+              contactStatus: false
+            }));
+
+            // Automatically start scanning again after a delay if auto-connect is enabled
+            if (state.autoConnectEnabled) {
+              setTimeout(() => {
+                addLog('Auto-connect enabled: starting scan after connection monitor detected disconnection');
+                startScan();
+              }, 2000);
             }
           }
         } catch (error) {
@@ -785,7 +842,7 @@ export const useBLE = () => {
         clearInterval(connectionMonitorId);
       }
     };
-  }, [state.connectedDevice, state.connectionStatus]);
+  }, [state.connectionStatus, state.autoConnectEnabled, startScan]);
 
   // Check if saved device is active and update ready indicator
   useEffect(() => {
@@ -825,37 +882,6 @@ export const useBLE = () => {
     }
   }, [state.autoConnectEnabled, state.savedDevice, state.scannedDevices, state.connectionStatus, connectToDevice]);
 
-  // Monitor Bluetooth state changes
-  useEffect(() => {
-    if (!bleManagerRef.current || !managerInitialized) {
-      return;
-    }
-
-    const subscription = bleManagerRef.current.onStateChange((bluetoothState) => {
-      console.log('Bluetooth state changed to:', bluetoothState);
-      // Update the state with the current Bluetooth state
-      setState(prev => ({ ...prev, bluetoothState }));
-
-      if (bluetoothState === 'PoweredOn') {
-        // Only log that Bluetooth is powered on - don't start scanning automatically
-        addLog('Bluetooth is powered on. Ready to scan when user initiates.');
-      } else if (bluetoothState !== 'PoweredOn' && state.connectionStatus === 'connected') {
-        // If Bluetooth is turned off while connected, update the state
-        setState(prev => ({
-          ...prev,
-          connectionStatus: 'disconnected',
-          connectedDevice: null,
-          ledStatus: { ...prev.ledStatus, btConnected: false }
-        }));
-        addLog(`Bluetooth turned off. Connection status: ${bluetoothState}`);
-      }
-    }, true);
-
-    return () => {
-      subscription.remove();
-    };
-  }, [state.connectionStatus, state.connectedDevice, state.isScanning, startScan, addLog, managerInitialized]);
-
   // Monitor Bluetooth state changes - SINGLE subscription with proper cleanup
   useEffect(() => {
     if (!bleManagerRef.current || !managerInitialized) {
@@ -884,6 +910,12 @@ export const useBLE = () => {
             ledStatus: { ...prev.ledStatus, btConnected: false }
           }));
           addLog(`Bluetooth turned off. Connection status: ${bluetoothState}`);
+        } else if (bluetoothState === 'PoweredOn' && state.connectionStatus === 'disconnected' && state.autoConnectEnabled && state.savedDevice) {
+          // If Bluetooth is turned back on and auto-connect is enabled, start scanning for saved device
+          addLog('Bluetooth powered on and auto-connect enabled: starting scan for saved device');
+          setTimeout(() => {
+            startScan();
+          }, 1000); // Small delay to ensure Bluetooth is fully ready
         }
       }
     }, true);

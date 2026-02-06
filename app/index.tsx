@@ -86,6 +86,9 @@ export default function Index() {
     saveSelectedDevice(device);
   };
 
+  // State for debug visibility toggle
+  const [showDebug, setShowDebug] = useState(false);
+
   // State for real-time signal debug timestamp
   const [realTimeSignalTimestamp, setRealTimeSignalTimestamp] = useState(new Date());
 
@@ -136,7 +139,11 @@ export default function Index() {
                 // Perform system check by scanning for saved device
                 if (state.savedDevice) {
                   // Start scan to detect if saved device is active
-                  startScan();
+                  // Only start scan if not already connected to the saved device
+                  if (state.connectionStatus !== 'connected' || 
+                      (state.connectionStatus === 'connected' && state.connectedDeviceId !== state.savedDevice.id)) {
+                    startScan();
+                  }
                   addLog('System check initiated: scanning for saved device');
                 } else {
                   Alert.alert('No Saved Device', 'Please save a device first before performing system check.');
@@ -147,15 +154,17 @@ export default function Index() {
             </TouchableOpacity>
           </View>
           {/* Debug Logs for System Status */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugTitle}>Debug:</Text>
-            <Text style={styles.debugText}>BT Connected: {state.ledStatus.btConnected ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Ready: {state.ledStatus.ready ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>WiFi: {state.ledStatus.wifi ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
-            <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
-          </View>
+          {showDebug && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug:</Text>
+              <Text style={styles.debugText}>BT Connected: {state.ledStatus.btConnected ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Ready: {state.ledStatus.ready ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>WiFi: {state.ledStatus.wifi ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
+              <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
+            </View>
+          )}
         </View>
 
         {/* Connection Status */}
@@ -178,7 +187,18 @@ export default function Index() {
               <>
                 {(() => {
                   // Find the connected device in the scanned devices array to get its details
-                  const connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                  let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                  
+                  // If not found in scanned devices, try to get from saved device info
+                  if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
+                    connectedDevice = {
+                      id: state.savedDevice.id,
+                      name: state.savedDevice.name,
+                      rssi: state.savedDevice.rssi,
+                      mtu: state.savedDevice.mtu
+                    } as any; // Type assertion to match Device interface
+                  }
+                  
                   return connectedDevice ? (
                     <>
                       <Text style={styles.deviceName}>
@@ -219,7 +239,19 @@ export default function Index() {
             <View style={styles.signalStrengthContainer}>
               {(() => {
                 // Find the connected device in the scanned devices array to get its details
-                const connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                // Prioritize the connected device from state.savedDevice if available
+                let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                
+                // If not found in scanned devices, try to get from saved device info
+                if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
+                  connectedDevice = {
+                    id: state.savedDevice.id,
+                    name: state.savedDevice.name,
+                    rssi: state.savedDevice.rssi,
+                    mtu: state.savedDevice.mtu
+                  } as any; // Type assertion to match Device interface
+                }
+                
                 return connectedDevice ? (
                   <>
                     <Text style={styles.signalStrengthTitle}>Signal Strength:</Text>
@@ -239,54 +271,87 @@ export default function Index() {
                     </Text>
 
                     {/* Real-time Signal Debug Information */}
-                    <View style={styles.realTimeSignalDebug} key={`rssi-debug-${state.rssiUpdateCounter}`}>
-                      <Text style={styles.realTimeSignalDebugTitle}>Real-time Signal Debug:</Text>
-                      <Text style={styles.realTimeSignalDebugText}>Last Updated: {realTimeSignalTimestamp.toLocaleTimeString()}</Text>
-                      <Text style={styles.realTimeSignalDebugText} key={`rssi-value-${state.rssiUpdateCounter}`}>Current RSSI: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}</Text>
-                      <Text style={styles.realTimeSignalDebugText} key={`signal-level-${state.rssiUpdateCounter}`}>Signal Level: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ?
-                        (connectedDevice.rssi >= -50 ? 'Excellent' :
-                         connectedDevice.rssi >= -60 ? 'Good' :
-                         connectedDevice.rssi >= -70 ? 'Fair' :
-                         'Poor') : 'N/A'}</Text>
-                      <Text style={styles.realTimeSignalDebugText} key={`distance-est-${state.rssiUpdateCounter}`}>Distance Estimation: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ?
-                        (connectedDevice.rssi >= -50 ? 'Very Close' :
-                         connectedDevice.rssi >= -60 ? 'Close' :
-                         connectedDevice.rssi >= -70 ? 'Medium' :
-                         'Far') : 'N/A'}</Text>
-                    </View>
+                    {showDebug && (
+                      <View style={styles.realTimeSignalDebug}>
+                        <Text style={styles.realTimeSignalDebugTitle}>Real-time Signal Debug:</Text>
+                        <Text style={styles.realTimeSignalDebugText}>Last Updated: {realTimeSignalTimestamp.toLocaleTimeString()}</Text>
+                        <Text style={styles.realTimeSignalDebugText}>Current RSSI: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}</Text>
+                        <Text style={styles.realTimeSignalDebugText}>Signal Level: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ?
+                          (connectedDevice.rssi >= -50 ? 'Excellent' :
+                           connectedDevice.rssi >= -60 ? 'Good' :
+                           connectedDevice.rssi >= -70 ? 'Fair' :
+                           'Poor') : 'N/A'}</Text>
+                        <Text style={styles.realTimeSignalDebugText}>Distance Estimation: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ?
+                          (connectedDevice.rssi >= -50 ? 'Very Close' :
+                           connectedDevice.rssi >= -60 ? 'Close' :
+                           connectedDevice.rssi >= -70 ? 'Medium' :
+                           'Far') : 'N/A'}</Text>
+                      </View>
+                    )}
                   </>
-                ) : null;
+                ) : (
+                  // Show a placeholder when device is connected but RSSI info is not available
+                  <>
+                    <Text style={styles.signalStrengthTitle}>Signal Strength:</Text>
+                    <View style={styles.signalStrengthBar}>
+                      <View
+                        style={[
+                          styles.signalStrengthFill,
+                          {
+                            width: '0%',
+                            backgroundColor: getSignalColor(undefined)
+                          }
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.signalStrengthValue}>N/A</Text>
+                  </>
+                );
               })()}
             </View>
           )}
           {/* Debug Logs for Connection Status */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugTitle}>Debug:</Text>
-            <Text style={styles.debugText}>Connection Status: {state.connectionStatus}</Text>
-            <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
-            {(() => {
-              const connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
-              return (
-                <>
-                  <Text style={styles.debugText}>Connected Device Name: {connectedDevice?.name || 'None'}</Text>
-                  <Text style={styles.debugText}>Connected Device RSSI: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}</Text>
-                  <Text style={styles.debugText}>Signal Strength Level: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ?
-                    (connectedDevice.rssi >= -50 ? 'Excellent' :
-                     connectedDevice.rssi >= -60 ? 'Good' :
-                     connectedDevice.rssi >= -70 ? 'Fair' :
-                     'Poor') : 'N/A'}</Text>
-                  <Text style={styles.debugText}>Signal Quality: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ?
-                    (() => {
-                      const rssi = connectedDevice.rssi;
-                      if (rssi >= -50) return 'Strong (>= -50 dBm)';
-                      if (rssi >= -60) return 'Good (-50 to -60 dBm)';
-                      if (rssi >= -70) return 'Fair (-60 to -70 dBm)';
-                      return 'Weak (< -70 dBm)';
-                    })() : 'N/A'}</Text>
-                </>
-              );
-            })()}
-          </View>
+          {showDebug && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug:</Text>
+              <Text style={styles.debugText}>Connection Status: {state.connectionStatus}</Text>
+              <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
+              {(() => {
+                // Find the connected device in the scanned devices array to get its details
+                let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                
+                // If not found in scanned devices, try to get from saved device info
+                if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
+                  connectedDevice = {
+                    id: state.savedDevice.id,
+                    name: state.savedDevice.name,
+                    rssi: state.savedDevice.rssi,
+                    mtu: state.savedDevice.mtu
+                  } as any; // Type assertion to match Device interface
+                }
+                
+                return (
+                  <>
+                    <Text style={styles.debugText}>Connected Device Name: {connectedDevice?.name || 'None'}</Text>
+                    <Text style={styles.debugText}>Connected Device RSSI: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}</Text>
+                    <Text style={styles.debugText}>Signal Strength Level: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ?
+                      (connectedDevice.rssi >= -50 ? 'Excellent' :
+                       connectedDevice.rssi >= -60 ? 'Good' :
+                       connectedDevice.rssi >= -70 ? 'Fair' :
+                       'Poor') : 'N/A'}</Text>
+                    <Text style={styles.debugText}>Signal Quality: {connectedDevice?.rssi !== undefined && connectedDevice?.rssi !== null ?
+                      (() => {
+                        const rssi = connectedDevice.rssi;
+                        if (rssi >= -50) return 'Strong (>= -50 dBm)';
+                        if (rssi >= -60) return 'Good (-50 to -60 dBm)';
+                        if (rssi >= -70) return 'Fair (-60 to -70 dBm)';
+                        return 'Weak (< -70 dBm)';
+                      })() : 'N/A'}</Text>
+                  </>
+                );
+              })()}
+            </View>
+          )}
         </View>
 
         {/* Saved Device Section */}
@@ -305,10 +370,15 @@ export default function Index() {
                       <TouchableOpacity
                         style={styles.connectButton}
                         onPress={() => {
-                          // Find the device in scanned devices or try to connect directly
-                          const device = state.scannedDevices.find(d => d.id === savedDevice.id) ||
-                                         { id: savedDevice.id, name: savedDevice.name, rssi: savedDevice.rssi };
-                          connectToDevice(device);
+                          // Find the device in scanned devices
+                          const device = state.scannedDevices.find(d => d.id === savedDevice.id);
+                          if (device) {
+                            connectToDevice(device);
+                          } else {
+                            // If device is not in scanned devices, start scanning to find it
+                            addLog('Saved device not found in scan list, starting scan to locate device');
+                            startScan();
+                          }
                         }}
                       >
                         <Text style={styles.buttonText}>Connect to Saved Device</Text>
@@ -343,15 +413,17 @@ export default function Index() {
             })()}
           </View>
           {/* Debug Logs for Saved Device */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugTitle}>Debug:</Text>
-            <Text style={styles.debugText}>Saved Device Exists: {state.savedDevice ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Saved Device Name: {state.savedDevice?.name || 'None'}</Text>
-            <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
-            <Text style={styles.debugText}>Saved Device RSSI: {state.savedDevice?.rssi ? `${state.savedDevice.rssi} dBm` : 'None'}</Text>
-            <Text style={styles.debugText}>Saved Device Matches Connected: {(state.savedDevice && state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Saved Device in Scan List: {(state.savedDevice && state.scannedDevices.some(d => d.id === state.savedDevice.id)) ? 'Yes' : 'No'}</Text>
-          </View>
+          {showDebug && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug:</Text>
+              <Text style={styles.debugText}>Saved Device Exists: {state.savedDevice ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Saved Device Name: {state.savedDevice?.name || 'None'}</Text>
+              <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
+              <Text style={styles.debugText}>Saved Device RSSI: {state.savedDevice?.rssi ? `${state.savedDevice.rssi} dBm` : 'None'}</Text>
+              <Text style={styles.debugText}>Saved Device Matches Connected: {(state.savedDevice && state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Saved Device in Scan List: {(state.savedDevice && state.scannedDevices.some(d => d.id === state.savedDevice.id)) ? 'Yes' : 'No'}</Text>
+            </View>
+          )}
         </View>
 
         {/* Connection Controls */}
@@ -389,7 +461,11 @@ export default function Index() {
                 // Trigger a system check by scanning for saved device
                 if (state.savedDevice) {
                   // Start scan to detect if saved device is active
-                  startScan();
+                  // Only start scan if not already connected to the saved device
+                  if (state.connectionStatus !== 'connected' || 
+                      (state.connectionStatus === 'connected' && state.connectedDeviceId !== state.savedDevice.id)) {
+                    startScan();
+                  }
                   addLog('System check initiated: scanning for saved device');
                 } else {
                   Alert.alert('No Saved Device', 'Please save a device first before performing system check.');
@@ -415,15 +491,32 @@ export default function Index() {
             </TouchableOpacity>
           </View>
 
+          {/* Debug Visibility Toggle */}
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                showDebug && styles.activeButton // Highlight when enabled
+              ]}
+              onPress={() => setShowDebug(!showDebug)}
+            >
+              <Text style={styles.buttonText}>
+                Show Debug: {showDebug ? 'ON' : 'OFF'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
 
           {/* Debug Logs for Connection Controls */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugTitle}>Debug:</Text>
-            <Text style={styles.debugText}>Is Scanning: {state.isScanning ? 'Yes' : 'No'}</Text>
-            <Text style={styles.debugText}>Connection Status: {state.connectionStatus}</Text>
-            <Text style={styles.debugText}>Bluetooth State: {state.bluetoothState || 'Unknown'}</Text>
-            <Text style={styles.debugText}>Auto-Connect Enabled: {state.autoConnectEnabled ? 'Yes' : 'No'}</Text>
-          </View>
+          {showDebug && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug:</Text>
+              <Text style={styles.debugText}>Is Scanning: {state.isScanning ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Connection Status: {state.connectionStatus}</Text>
+              <Text style={styles.debugText}>Bluetooth State: {state.bluetoothState || 'Unknown'}</Text>
+              <Text style={styles.debugText}>Auto-Connect Enabled: {state.autoConnectEnabled ? 'Yes' : 'No'}</Text>
+            </View>
+          )}
         </View>
 
         {/* Available Bluetooth Devices */}
@@ -456,11 +549,13 @@ export default function Index() {
             )}
           </View>
           {/* Debug Logs for Available Bluetooth Devices */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugTitle}>Debug:</Text>
-            <Text style={styles.debugText}>Number of Devices Found: {state.scannedDevices.length}</Text>
-            <Text style={styles.debugText}>Is Scanning: {state.isScanning ? 'Yes' : 'No'}</Text>
-          </View>
+          {showDebug && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug:</Text>
+              <Text style={styles.debugText}>Number of Devices Found: {state.scannedDevices.length}</Text>
+              <Text style={styles.debugText}>Is Scanning: {state.isScanning ? 'Yes' : 'No'}</Text>
+            </View>
+          )}
         </View>
 
         {/* Device Status - Removed contact control button */}
@@ -468,11 +563,30 @@ export default function Index() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Device Status</Text>
             {/* Debug Logs for Device Status */}
-            <View style={styles.debugSection}>
-              <Text style={styles.debugTitle}>Debug:</Text>
-              <Text style={styles.debugText}>Contact Status: {state.contactStatus ? 'ON' : 'OFF'}</Text>
-              <Text style={styles.debugText}>Connected Device: {state.scannedDevices.find(d => d.id === state.connectedDeviceId)?.name || 'None'}</Text>
-            </View>
+            {showDebug && (
+              <View style={styles.debugSection}>
+                <Text style={styles.debugTitle}>Debug:</Text>
+                <Text style={styles.debugText}>Contact Status: {state.contactStatus ? 'ON' : 'OFF'}</Text>
+                {(() => {
+                  // Find the connected device in the scanned devices array to get its details
+                  let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+                  
+                  // If not found in scanned devices, try to get from saved device info
+                  if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
+                    connectedDevice = {
+                      id: state.savedDevice.id,
+                      name: state.savedDevice.name,
+                      rssi: state.savedDevice.rssi,
+                      mtu: state.savedDevice.mtu
+                    } as any; // Type assertion to match Device interface
+                  }
+                  
+                  return (
+                    <Text style={styles.debugText}>Connected Device: {connectedDevice?.name || 'None'}</Text>
+                  );
+                })()}
+              </View>
+            )}
           </View>
         )}
 
@@ -492,11 +606,13 @@ export default function Index() {
             </ScrollView>
           </View>
           {/* Debug Logs for Activity Log */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugTitle}>Debug:</Text>
-            <Text style={styles.debugText}>Total Log Entries: {state.logs.length}</Text>
-            <Text style={styles.debugText}>Last Log Entry: {state.logs.length > 0 ? state.logs[0] : 'None'}</Text>
-          </View>
+          {showDebug && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug:</Text>
+              <Text style={styles.debugText}>Total Log Entries: {state.logs.length}</Text>
+              <Text style={styles.debugText}>Last Log Entry: {state.logs.length > 0 ? state.logs[0] : 'None'}</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
