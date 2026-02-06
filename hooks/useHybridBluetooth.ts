@@ -45,8 +45,8 @@ export const useHybridBluetooth = () => {
       // Cek versi Android
       if (Platform.Version >= 31) { // Android 12+
         const permissions = [
-          'android.permission.BLUETOOTH_CONNECT',
-          'android.permission.BLUETOOTH_SCAN',
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         ];
 

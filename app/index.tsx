@@ -16,9 +16,12 @@ import { useBLE } from '../hooks/useBLE';
 import { Ionicons, MaterialCommunityIcons, Entypo } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useTheme } from '@/context/ThemeContext';
+import { Device } from 'react-native-ble-plx';
+import ErrorDisplay from '@/components/ErrorDisplay';
+import BluetoothDeviceItem from '@/components/BluetoothDeviceItem';
 
 // Function to determine signal strength color
-const getSignalColor = (rssi) => {
+const getSignalColor = (rssi: number | undefined) => {
   if (rssi === undefined) return '#94a3b8'; // Gray if no RSSI
   if (rssi >= -50) return '#4ade80'; // Strong signal - green
   if (rssi >= -70) return '#fbbf24'; // Medium signal - yellow
@@ -43,65 +46,6 @@ const LEDIndicator = ({ active, label, icon, theme }: { active: boolean; label: 
   );
 };
 
-// Component for displaying a Bluetooth device with modern design
-const BluetoothDeviceItem = ({ device, onSelect, onSaveDevice, theme }: { 
-  device: any; 
-  onSelect: any; 
-  onSaveDevice: any; 
-  theme: 'light' | 'dark' | 'oled' 
-}) => {
-  const styles = getStyles(theme);
-  const rssiLevel = device.rssi !== undefined ? 
-    (device.rssi >= -50 ? 4 : device.rssi >= -60 ? 3 : device.rssi >= -70 ? 2 : 1) : 0;
-
-  return (
-    <View style={styles.deviceItem}>
-      <View style={styles.deviceInfo}>
-        <View style={styles.deviceHeader}>
-          <MaterialCommunityIcons 
-            name="bluetooth" 
-            size={20} 
-            color={theme === 'light' ? "#3b82f6" : "#60a5fa"} 
-            style={styles.deviceIcon}
-          />
-          <Text style={styles.deviceName}>
-            {device.name || 'Unknown Device'}
-          </Text>
-        </View>
-        <Text style={styles.deviceId}>
-          ID: {device.id}
-        </Text>
-      </View>
-      
-      <View style={styles.deviceSignal}>
-        <View style={styles.signalStrengthContainer}>
-          {[1, 2, 3, 4].map((level) => (
-            <View
-              key={level}
-              style={[
-                styles.signalBar,
-                level <= rssiLevel ? { backgroundColor: getSignalColor(device.rssi) } : styles.signalBarEmpty
-              ]}
-            />
-          ))}
-        </View>
-        <Text style={styles.deviceRssi}>
-          {device.rssi !== undefined ? `${device.rssi} dBm` : 'N/A'}
-        </Text>
-      </View>
-      
-      <View style={styles.deviceActions}>
-        <TouchableOpacity
-          style={styles.selectButton}
-          onPress={() => onSaveDevice(device)}
-        >
-          <Entypo name="save" size={16} color="#ffffff" />
-          <Text style={styles.buttonText}>Save</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
 
 // Component for the main screen with modern design
 export default function Index() {
@@ -122,7 +66,7 @@ export default function Index() {
   const colorScheme = useColorScheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const handleDeviceSelect = (device) => {
+  const handleDeviceSelect = (device: Device) => {
     connectToDevice(device);
     // Save the selected device to storage
     saveSelectedDevice(device);
@@ -131,6 +75,7 @@ export default function Index() {
   // State for debug visibility toggle
   const [showDebug, setShowDebug] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [showErrorDisplay, setShowErrorDisplay] = useState(false);
 
   // State for real-time signal debug timestamp
   const [realTimeSignalTimestamp, setRealTimeSignalTimestamp] = useState(new Date());
@@ -239,7 +184,7 @@ export default function Index() {
                 <Text style={styles.debugText}>BT Connected: {state.ledStatus.btConnected ? 'Yes' : 'No'}</Text>
                 <Text style={styles.debugText}>Ready: {state.ledStatus.ready ? 'Yes' : 'No'}</Text>
                 <Text style={styles.debugText}>WiFi: {state.ledStatus.wifi ? 'Yes' : 'No'}</Text>
-                <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
+                <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice?.id)))) ? 'Yes' : 'No'}</Text>
                 <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
                 <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
               </View>
@@ -309,7 +254,7 @@ export default function Index() {
                       </View>
                       <View style={styles.deviceDetailRow}>
                         <MaterialCommunityIcons name="signal" size={16} color="#94a3b8" />
-                        <Text style={styles.deviceRssi}>
+                        <Text style={styles.connectedDeviceRssi}>
                           {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}
                         </Text>
                       </View>
@@ -336,7 +281,7 @@ export default function Index() {
                       </View>
                       <View style={styles.deviceDetailRow}>
                         <MaterialCommunityIcons name="signal-off" size={16} color="#94a3b8" />
-                        <Text style={styles.deviceRssi}>
+                        <Text style={styles.connectedDeviceRssi}>
                           N/A
                         </Text>
                       </View>
@@ -560,7 +505,7 @@ export default function Index() {
               <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
               <Text style={styles.debugText}>Saved Device RSSI: {state.savedDevice?.rssi ? `${state.savedDevice.rssi} dBm` : 'None'}</Text>
               <Text style={styles.debugText}>Saved Device Matches Connected: {(state.savedDevice && state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) ? 'Yes' : 'No'}</Text>
-              <Text style={styles.debugText}>Saved Device in Scan List: {(state.savedDevice && state.scannedDevices.some(d => d.id === state.savedDevice.id)) ? 'Yes' : 'No'}</Text>
+              <Text style={styles.debugText}>Saved Device in Scan List: {(state.savedDevice && state.scannedDevices.some(d => d.id === state.savedDevice?.id)) ? 'Yes' : 'No'}</Text>
             </View>
           )}
         </View>
@@ -665,13 +610,27 @@ export default function Index() {
               ]}
               onPress={() => setShowDebug(!showDebug)}
             >
+              <Ionicons
+                name={showDebug ? "eye" : "eye-off"}
+                size={20}
+                color="#ffffff"
+              />
+              <Text style={styles.buttonText}>
+                Show Debug: {showDebug ? 'ON' : 'OFF'}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => setShowErrorDisplay(true)}
+            >
               <Ionicons 
-                name={showDebug ? "eye" : "eye-off"} 
+                name="alert-circle" 
                 size={20} 
                 color="#ffffff" 
               />
               <Text style={styles.buttonText}>
-                Show Debug: {showDebug ? 'ON' : 'OFF'}
+                Show Errors
               </Text>
             </TouchableOpacity>
           </View>
@@ -786,7 +745,6 @@ export default function Index() {
               style={styles.logScrollView}
               contentContainerStyle={styles.logContent}
               showsVerticalScrollIndicator={false}
-              inverted={true} // Show newest logs at top
             >
               {state.logs.map((log, index) => (
                 <Text key={index} style={styles.logEntry}>{log}</Text>
@@ -805,6 +763,10 @@ export default function Index() {
         </View>
       </ScrollView>
     </Animated.View>
+    <ErrorDisplay 
+      visible={showErrorDisplay} 
+      onClose={() => setShowErrorDisplay(false)} 
+    />
     </SafeAreaView>
   );
 }
@@ -1135,7 +1097,7 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
     signalBarEmpty: {
       backgroundColor: isDark ? '#4b5563' : '#cbd5e1',
     },
-    deviceRssi: {
+    connectedDeviceRssi: {
       fontSize: 12,
       color: isDark ? '#9ca3af' : '#64748b',
       minWidth: 50,

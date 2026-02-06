@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BleManager, Device, BleError } from 'react-native-ble-plx';
+import { BleManager, Device, BleError, State } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ErrorHandler, ErrorType, withErrorHandler } from '@/utils/errorHandler';
 
 // Define constants for ESP32 services and characteristics
 const ESP32_DEVICE_NAME = 'ESP32_KEYLESS';
@@ -41,6 +42,14 @@ export const useBLE = () => {
   const connectedDeviceRef = useRef<Device | null>(null); // Store actual Device instance in useRef
   const [managerInitialized, setManagerInitialized] = useState(false);
 
+  // Add log entry
+  const addLog = useCallback((message: string) => {
+    setState(prev => ({
+      ...prev,
+      logs: [...prev.logs, `${new Date().toLocaleTimeString()}: ${message}`].slice(-20) // Keep last 20 logs
+    }));
+  }, []);
+
   // Initialize BleManager only on the client side after native modules are available
   useEffect(() => {
     // Only initialize on the client side (mobile device)
@@ -65,7 +74,9 @@ export const useBLE = () => {
 
       // Cleanup function
       return () => {
-        clearTimeout(timer);
+        if (timer) {
+          clearTimeout(timer);
+        }
         if (bleManagerRef.current) {
           try {
             bleManagerRef.current.destroy();
@@ -101,14 +112,6 @@ export const useBLE = () => {
   // Keep references to subscriptions to properly clean them up
   const statusSubscriptionRef = useRef<any | null>(null);
 
-  // Add log entry
-  const addLog = useCallback((message: string) => {
-    setState(prev => ({
-      ...prev,
-      logs: [...prev.logs, `${new Date().toLocaleTimeString()}: ${message}`].slice(-20) // Keep last 20 logs
-    }));
-  }, []);
-
   // Request Bluetooth permissions
   const requestPermissions = useCallback(async (): Promise<boolean> => {
     if (Platform.OS === 'android') {
@@ -116,8 +119,8 @@ export const useBLE = () => {
       if (Platform.Version >= 31) { // Android 12+ (API 31+)
         // Request all required permissions at once
         const permissions = [
-          'android.permission.BLUETOOTH_SCAN',
-          'android.permission.BLUETOOTH_CONNECT',
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         ];
 
@@ -138,6 +141,7 @@ export const useBLE = () => {
             }
           });
           
+          ErrorHandler.handleError(ErrorType.PERMISSION_DENIED, 'Bluetooth permissions denied');
           return false;
         }
       } else { // Android 11 and below
@@ -154,6 +158,7 @@ export const useBLE = () => {
 
         if (locationPermission !== PermissionsAndroid.RESULTS.GRANTED) {
           addLog('Location permission denied');
+          ErrorHandler.handleError(ErrorType.PERMISSION_DENIED, 'Location permission denied');
           return false;
         }
       }
@@ -186,19 +191,9 @@ export const useBLE = () => {
 
         // On Android, we can prompt the user to enable Bluetooth
         if (Platform.OS === 'android') {
-          try {
-            await bleManagerRef.current.enableBluetooth();
-            addLog('Attempting to enable Bluetooth...');
-
-            // Wait a moment for Bluetooth to enable before scanning
-            setTimeout(() => {
-              // Retry the scan after a delay
-              setTimeout(startScan, 2000);
-            }, 1000);
-          } catch (err) {
-            addLog('Failed to enable Bluetooth automatically. Please enable it manually.');
-            return;
-          }
+          addLog('Failed to enable Bluetooth automatically. Please enable it manually.');
+          ErrorHandler.handleError(ErrorType.BLUETOOTH_DISABLED, 'Bluetooth is disabled');
+          return;
         }
         return;
       } else {
@@ -448,7 +443,10 @@ export const useBLE = () => {
         addLog(`Connected to ${connectedDevice.name || connectedDevice.id} (with limited functionality)`);
       }
     } catch (err) {
-      addLog(`Connection failed: ${(err as Error).message}`);
+      const errorMessage = `Connection failed: ${(err as Error).message}`;
+      addLog(errorMessage);
+      ErrorHandler.handleError(ErrorType.CONNECTION_TIMEOUT, errorMessage, err);
+      
       setState(prev => ({
         ...prev,
         connectionStatus: 'disconnected',
@@ -527,13 +525,13 @@ export const useBLE = () => {
 
   // Send command to ESP32
   const sendCommand = useCallback(async (command: 'ON' | 'OFF'): Promise<boolean> => {
-    if (state.connectionStatus !== 'connected' || !state.connectedDevice) {
+    if (state.connectionStatus !== 'connected' || !connectedDeviceRef.current) {
       addLog('Not connected to device');
       return false;
     }
 
     try {
-      const device = state.connectedDevice;
+      const device = connectedDeviceRef.current;
 
       // Prepare command data (for example, 1 for ON, 0 for OFF)
       const commandValue = command === 'ON' ? 1 : 0;
@@ -542,7 +540,7 @@ export const useBLE = () => {
       const commandData = btoa(String.fromCharCode(...commandBuffer));
 
       // Write to control characteristic
-      await device.writeCharacteristicWithResponse(
+      await device.writeCharacteristicWithResponseForService(
         SERVICE_UUID,
         CONTROL_CHARACTERISTIC_UUID,
         commandData
@@ -561,7 +559,7 @@ export const useBLE = () => {
       addLog(`Failed to send command: ${(err as Error).message}`);
       return false;
     }
-  }, [state.connectionStatus, state.connectedDevice, addLog]);
+  }, [state.connectionStatus, addLog]);
 
   // Toggle contact state
   const toggleContact = useCallback(async () => {
@@ -612,8 +610,11 @@ export const useBLE = () => {
         contactStatus: false
       }));
       addLog(`Disconnected from device ID: ${state.connectedDeviceId}`);
+      ErrorHandler.handleError(ErrorType.DISCONNECTED, `Disconnected from device ID: ${state.connectedDeviceId}`);
     } catch (err) {
-      addLog(`Disconnect error: ${(err as Error).message}`);
+      const errorMessage = `Disconnect error: ${(err as Error).message}`;
+      addLog(errorMessage);
+      ErrorHandler.handleError(ErrorType.UNKNOWN, errorMessage, err);
     }
   }, [state.connectedDeviceId, addLog, managerInitialized]);
 
@@ -624,6 +625,7 @@ export const useBLE = () => {
     }
 
     const subscription = bleManagerRef.current.onDeviceDisconnected(
+      state.connectedDeviceId || '', // Device ID to listen for disconnection
       (error: BleError | null, device: Device) => {
         console.log('Device disconnected event triggered:', device.id, 'Expected:', state.connectedDeviceId);
         if (device.id === state.connectedDeviceId) {
@@ -899,9 +901,9 @@ export const useBLE = () => {
         // Update the state with the current Bluetooth state
         setState(prev => ({ ...prev, bluetoothState }));
 
-        if (bluetoothState === 'PoweredOn') {
+        if (bluetoothState === State.PoweredOn) {
           addLog('Bluetooth is powered on. Ready to scan when user initiates.');
-        } else if (bluetoothState !== 'PoweredOn' && state.connectionStatus === 'connected') {
+        } else if (bluetoothState !== State.PoweredOn && state.connectionStatus === 'connected') {
           // If Bluetooth is turned off while connected, update the state
           setState(prev => ({
             ...prev,
@@ -910,7 +912,7 @@ export const useBLE = () => {
             ledStatus: { ...prev.ledStatus, btConnected: false }
           }));
           addLog(`Bluetooth turned off. Connection status: ${bluetoothState}`);
-        } else if (bluetoothState === 'PoweredOn' && state.connectionStatus === 'disconnected' && state.autoConnectEnabled && state.savedDevice) {
+        } else if (bluetoothState === State.PoweredOn && state.connectionStatus === 'disconnected' && state.autoConnectEnabled && state.savedDevice) {
           // If Bluetooth is turned back on and auto-connect is enabled, start scanning for saved device
           addLog('Bluetooth powered on and auto-connect enabled: starting scan for saved device');
           setTimeout(() => {

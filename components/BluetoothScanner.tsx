@@ -98,7 +98,7 @@ const BluetoothScanner: React.FC<BluetoothScannerProps> = ({
 
   const closeModal = () => {
     if (isScanning) {
-      bleManager.stopDeviceScan();
+      bleManagerRef.current?.stopDeviceScan();
       setIsScanning(false);
     }
     onClose();
@@ -160,7 +160,7 @@ const BluetoothScanner: React.FC<BluetoothScannerProps> = ({
                   </>
                 ) : (
                   <ThemedText style={styles.emptyText}>
-                    No devices found. Tap "Scan" to search.
+                    No devices found. Tap &quot;Scan&quot; to search.
                   </ThemedText>
                 )}
               </View>

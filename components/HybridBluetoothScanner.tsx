@@ -174,7 +174,7 @@ const HybridBluetoothScanner: React.FC<BluetoothScannerProps> = ({
                   </>
                 ) : (
                   <ThemedText style={styles.emptyText}>
-                    No devices found. Tap "Scan" to search.
+                    No devices found. Tap &quot;Scan&quot; to search.
                   </ThemedText>
                 )}
               </View>

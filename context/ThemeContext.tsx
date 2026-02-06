@@ -20,13 +20,13 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useState<ThemeType>('light');
-  
+  const [theme, setTheme] = useState<ThemeType>('dark'); // Set dark as initial theme
+
   // Load theme from system preference or saved preference
   useEffect(() => {
     const systemTheme = Appearance.getColorScheme() as ThemeType;
-    // You could also load from async storage here if you want to persist user selection
-    setTheme(systemTheme || 'dark'); // Set dark theme as default
+    // Respect system theme preference, but default to dark if none is set
+    setTheme(systemTheme || 'dark');
   }, []);
 
   const toggleTheme = () => {

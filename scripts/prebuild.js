@@ -105,7 +105,8 @@ function validateBLEPermissions() {
     // Check for Android permissions
     if (config.expo.plugins) {
       const blePlugin = config.expo.plugins.find(plugin =>
-        Array.isArray(plugin) && plugin[0] === 'react-native-ble-plx'
+        (Array.isArray(plugin) && plugin[0] === 'react-native-ble-plx') || 
+        (typeof plugin === 'string' && plugin === 'react-native-ble-plx')
       );
 
       if (blePlugin) {
