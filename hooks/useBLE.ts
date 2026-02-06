@@ -384,9 +384,9 @@ export const useBLE = () => {
         addLog(`Connection check failed (this is OK): ${(checkError as Error).message}`);
       }
 
-      // Connect to the device using the device instance (not just the ID)
+      // Connect to the device using the bleManager
       // Using shorter timeout to prevent hanging
-      const connectedDevice = await device.connect({ timeout: 8000, autoConnect: false });
+      const connectedDevice = await bleManagerRef.current.connectToDevice(device.id, { timeout: 8000 });
 
       // Verify the device is actually connected before proceeding
       const isConnected = await connectedDevice.isConnected();
