@@ -25,6 +25,14 @@ export const Colors = {
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
   },
+  oled: {
+    text: '#ECEDEE',
+    background: '#000000', // Pure black for OLED displays
+    tint: tintColorDark,
+    icon: '#9BA1A6',
+    tabIconDefault: '#9BA1A6',
+    tabIconSelected: tintColorDark,
+  },
 };
 
 export const Fonts = Platform.select({

@@ -6,18 +6,16 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  FlatList
+  FlatList,
+  Animated,
+  RefreshControl,
+  useColorScheme
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBLE } from '../hooks/useBLE';
-
-// Component for LED indicator
-const LEDIndicator = ({ active, label }: { active: boolean; label: string }) => (
-  <View style={styles.ledContainer}>
-    <View style={[styles.led, active ? styles.ledActive : styles.ledInactive]} />
-    <Text style={styles.ledLabel}>{label}</Text>
-  </View>
-);
+import { Ionicons, MaterialCommunityIcons, Entypo } from '@expo/vector-icons';
+import { Colors } from '@/constants/theme';
+import { useTheme } from '@/context/ThemeContext';
 
 // Function to determine signal strength color
 const getSignalColor = (rssi) => {
@@ -27,45 +25,85 @@ const getSignalColor = (rssi) => {
   return '#f87171'; // Weak signal - red
 };
 
-// Component for displaying a Bluetooth device
-const BluetoothDeviceItem = ({ device, onSelect, onSaveDevice }) => {
+// Component for LED indicator with modern design
+const LEDIndicator = ({ active, label, icon, theme }: { active: boolean; label: string; icon: string; theme: 'light' | 'dark' | 'oled' }) => {
+  const styles = getStyles(theme);
+  
+  return (
+    <View style={styles.ledContainer}>
+      <View style={[styles.led, active ? styles.ledActive : styles.ledInactive]}>
+        <Ionicons 
+          name={icon as any} 
+          size={16} 
+          color={active ? '#10b981' : (theme === 'light' ? '#64748b' : '#9ca3af')} 
+        />
+      </View>
+      <Text style={styles.ledLabel}>{label}</Text>
+    </View>
+  );
+};
+
+// Component for displaying a Bluetooth device with modern design
+const BluetoothDeviceItem = ({ device, onSelect, onSaveDevice, theme }: { 
+  device: any; 
+  onSelect: any; 
+  onSaveDevice: any; 
+  theme: 'light' | 'dark' | 'oled' 
+}) => {
+  const styles = getStyles(theme);
+  const rssiLevel = device.rssi !== undefined ? 
+    (device.rssi >= -50 ? 4 : device.rssi >= -60 ? 3 : device.rssi >= -70 ? 2 : 1) : 0;
 
   return (
     <View style={styles.deviceItem}>
       <View style={styles.deviceInfo}>
-        <Text style={styles.deviceName}>
-          {device.name || 'Unknown Device'}
-        </Text>
+        <View style={styles.deviceHeader}>
+          <MaterialCommunityIcons 
+            name="bluetooth" 
+            size={20} 
+            color={theme === 'light' ? "#3b82f6" : "#60a5fa"} 
+            style={styles.deviceIcon}
+          />
+          <Text style={styles.deviceName}>
+            {device.name || 'Unknown Device'}
+          </Text>
+        </View>
         <Text style={styles.deviceId}>
           ID: {device.id}
         </Text>
       </View>
+      
       <View style={styles.deviceSignal}>
-        {device.rssi !== undefined && (
-          <Text style={styles.deviceRssi}>
-            {device.rssi} dBm
-          </Text>
-        )}
-        <View style={[
-          styles.signalIndicator,
-          {
-            backgroundColor: getSignalColor(device.rssi)
-          }
-        ]} />
+        <View style={styles.signalStrengthContainer}>
+          {[1, 2, 3, 4].map((level) => (
+            <View
+              key={level}
+              style={[
+                styles.signalBar,
+                level <= rssiLevel ? { backgroundColor: getSignalColor(device.rssi) } : styles.signalBarEmpty
+              ]}
+            />
+          ))}
+        </View>
+        <Text style={styles.deviceRssi}>
+          {device.rssi !== undefined ? `${device.rssi} dBm` : 'N/A'}
+        </Text>
       </View>
+      
       <View style={styles.deviceActions}>
         <TouchableOpacity
           style={styles.selectButton}
           onPress={() => onSaveDevice(device)}
         >
-          <Text style={styles.buttonText}>Select</Text>
+          <Entypo name="save" size={16} color="#ffffff" />
+          <Text style={styles.buttonText}>Save</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 };
 
-// Component for the main screen
+// Component for the main screen with modern design
 export default function Index() {
   const {
     state,
@@ -79,6 +117,10 @@ export default function Index() {
     addLog,
     toggleAutoConnect
   } = useBLE();
+  
+  const { theme, toggleTheme } = useTheme();
+  const colorScheme = useColorScheme();
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const handleDeviceSelect = (device) => {
     connectToDevice(device);
@@ -88,6 +130,7 @@ export default function Index() {
 
   // State for debug visibility toggle
   const [showDebug, setShowDebug] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // State for real-time signal debug timestamp
   const [realTimeSignalTimestamp, setRealTimeSignalTimestamp] = useState(new Date());
@@ -109,86 +152,137 @@ export default function Index() {
     };
   }, [state.connectionStatus, state.connectedDeviceId]);
 
+  // Animation for initial load
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    // Simulate refresh action
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 1000);
+  };
+
   // Note: Scanning stops automatically when connecting to a device
+
+  const styles = getStyles(theme);
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContainer}
-        keyboardShouldPersistTaps='handled'
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>AutoKey</Text>
-          <Text style={styles.subtitle}>Keyless Motor System</Text>
-        </View>
+      <Animated.View style={{ opacity: fadeAnim }}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps='handled'
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <MaterialCommunityIcons 
+              name="key-wireless" 
+              size={48} 
+              color="#3b82f6" 
+              style={styles.headerIcon}
+            />
+            <Text style={styles.title}>AutoKey</Text>
+            <Text style={styles.subtitle}>Keyless Motor System</Text>
+          </View>
 
-        {/* System Status */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>System Status</Text>
-          <View style={styles.ledRow}>
-            <LEDIndicator active={state.ledStatus.btConnected} label="BT Connected" />
-            <LEDIndicator active={state.ledStatus.ready} label="Ready" />
-            <LEDIndicator active={state.ledStatus.wifi} label="WiFi" />
-          </View>
-          {/* System Check Button */}
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              style={styles.systemCheckButton}
-              onPress={() => {
-                // Perform system check by scanning for saved device
-                if (state.savedDevice) {
-                  // Start scan to detect if saved device is active
-                  // Only start scan if not already connected to the saved device
-                  if (state.connectionStatus !== 'connected' || 
-                      (state.connectionStatus === 'connected' && state.connectedDeviceId !== state.savedDevice.id)) {
-                    startScan();
-                  }
-                  addLog('System check initiated: scanning for saved device');
-                } else {
-                  Alert.alert('No Saved Device', 'Please save a device first before performing system check.');
-                }
-              }}
-            >
-              <Text style={styles.buttonText}>System Check</Text>
-            </TouchableOpacity>
-          </View>
-          {/* Debug Logs for System Status */}
-          {showDebug && (
-            <View style={styles.debugSection}>
-              <Text style={styles.debugTitle}>Debug:</Text>
-              <Text style={styles.debugText}>BT Connected: {state.ledStatus.btConnected ? 'Yes' : 'No'}</Text>
-              <Text style={styles.debugText}>Ready: {state.ledStatus.ready ? 'Yes' : 'No'}</Text>
-              <Text style={styles.debugText}>WiFi: {state.ledStatus.wifi ? 'Yes' : 'No'}</Text>
-              <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
-              <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
-              <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
+          {/* System Status Card */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="hardware-chip-outline" size={24} color="#3b82f6" />
+              <Text style={styles.sectionTitle}>System Status</Text>
             </View>
-          )}
-        </View>
+            
+            <View style={styles.ledRow}>
+              <LEDIndicator active={state.ledStatus.btConnected} label="BT Connected" icon="bluetooth" theme={theme} />
+              <LEDIndicator active={state.ledStatus.ready} label="Ready" icon="checkmark-circle" theme={theme} />
+              <LEDIndicator active={state.ledStatus.wifi} label="WiFi" icon="wifi" theme={theme} />
+            </View>
+            
+            {/* System Check Button */}
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={styles.systemCheckButton}
+                onPress={() => {
+                  // Perform system check by scanning for saved device
+                  if (state.savedDevice) {
+                    // Start scan to detect if saved device is active
+                    // Only start scan if not already connected to the saved device
+                    if (state.connectionStatus !== 'connected' ||
+                        (state.connectionStatus === 'connected' && state.connectedDeviceId !== state.savedDevice.id)) {
+                      startScan();
+                    }
+                    addLog('System check initiated: scanning for saved device');
+                  } else {
+                    Alert.alert('No Saved Device', 'Please save a device first before performing system check.');
+                  }
+                }}
+              >
+                <Ionicons name="sync-circle" size={20} color="#ffffff" />
+                <Text style={styles.buttonText}> System Check</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Debug Logs for System Status */}
+            {showDebug && (
+              <View style={styles.debugSection}>
+                <Text style={styles.debugTitle}>Debug:</Text>
+                <Text style={styles.debugText}>BT Connected: {state.ledStatus.btConnected ? 'Yes' : 'No'}</Text>
+                <Text style={styles.debugText}>Ready: {state.ledStatus.ready ? 'Yes' : 'No'}</Text>
+                <Text style={styles.debugText}>WiFi: {state.ledStatus.wifi ? 'Yes' : 'No'}</Text>
+                <Text style={styles.debugText}>Saved Device Active: {(state.savedDevice && ((state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId) || (state.scannedDevices.some(d => d.id === state.savedDevice.id)))) ? 'Yes' : 'No'}</Text>
+                <Text style={styles.debugText}>Saved Device ID: {state.savedDevice?.id || 'None'}</Text>
+                <Text style={styles.debugText}>Connected Device ID: {state.connectedDeviceId || 'None'}</Text>
+              </View>
+            )}
+          </View>
 
-        {/* Connection Status */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Connection Status</Text>
+        {/* Connection Status Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="bluetooth" size={24} color="#3b82f6" />
+            <Text style={styles.sectionTitle}>Connection Status</Text>
+          </View>
+          
           <View style={styles.statusContainer}>
-            <Text style={styles.statusText}>
-              Status:
-              <Text style={[
-                styles.statusValue,
-                state.connectionStatus === 'connected' ? styles.connected :
-                state.connectionStatus === 'connecting' ? styles.connecting :
-                styles.disconnected
-              ]}>
-                {' '}{state.connectionStatus.charAt(0).toUpperCase() + state.connectionStatus.slice(1)}
+            <View style={styles.statusRow}>
+              <Ionicons 
+                name={state.connectionStatus === 'connected' ? 'bluetooth' : 
+                      state.connectionStatus === 'connecting' ? 'bluetooth-sharp' : 
+                      'bluetooth-outline'} 
+                size={20} 
+                color={state.connectionStatus === 'connected' ? '#4ade80' : 
+                       state.connectionStatus === 'connecting' ? '#fbbf24' : 
+                       '#f87171'} 
+              />
+              <Text style={styles.statusText}>
+                Status:
+                <Text style={[
+                  styles.statusValue,
+                  state.connectionStatus === 'connected' ? styles.connected :
+                  state.connectionStatus === 'connecting' ? styles.connecting :
+                  styles.disconnected
+                ]}>
+                  {' '}{state.connectionStatus.charAt(0).toUpperCase() + state.connectionStatus.slice(1)}
+                </Text>
               </Text>
-            </Text>
+            </View>
 
             {state.connectedDeviceId && (
               <>
                 {(() => {
                   // Find the connected device in the scanned devices array to get its details
                   let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
-                  
+
                   // If not found in scanned devices, try to get from saved device info
                   if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
                     connectedDevice = {
@@ -198,42 +292,67 @@ export default function Index() {
                       mtu: state.savedDevice.mtu
                     } as any; // Type assertion to match Device interface
                   }
-                  
+
                   return connectedDevice ? (
                     <>
-                      <Text style={styles.deviceName}>
-                        Device: {connectedDevice.name || 'Unknown Device'}
-                      </Text>
-                      <Text style={styles.deviceAddress}>
-                        ID: {connectedDevice.id}
-                      </Text>
-                      <Text style={styles.deviceRssi}>
-                        RSSI: {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}
-                      </Text>
-                      <Text style={styles.deviceMtu}>
-                        MTU: {connectedDevice.mtu ? `${connectedDevice.mtu}` : 'N/A'}
-                      </Text>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="devices" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceName}>
+                          {connectedDevice.name || 'Unknown Device'}
+                        </Text>
+                      </View>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="identifier" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceAddress}>
+                          {connectedDevice.id}
+                        </Text>
+                      </View>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="signal" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceRssi}>
+                          {connectedDevice.rssi !== undefined && connectedDevice.rssi !== null ? `${connectedDevice.rssi} dBm` : 'N/A'}
+                        </Text>
+                      </View>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="network" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceMtu}>
+                          {connectedDevice.mtu ? `${connectedDevice.mtu}` : 'N/A'}
+                        </Text>
+                      </View>
                     </>
                   ) : (
                     <>
-                      <Text style={styles.deviceName}>
-                        Device: Unknown Device
-                      </Text>
-                      <Text style={styles.deviceAddress}>
-                        ID: {state.connectedDeviceId}
-                      </Text>
-                      <Text style={styles.deviceRssi}>
-                        RSSI: N/A
-                      </Text>
-                      <Text style={styles.deviceMtu}>
-                        MTU: N/A
-                      </Text>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="devices" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceName}>
+                          Unknown Device
+                        </Text>
+                      </View>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="identifier" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceAddress}>
+                          {state.connectedDeviceId}
+                        </Text>
+                      </View>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="signal-off" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceRssi}>
+                          N/A
+                        </Text>
+                      </View>
+                      <View style={styles.deviceDetailRow}>
+                        <MaterialCommunityIcons name="network-off" size={16} color="#94a3b8" />
+                        <Text style={styles.deviceMtu}>
+                          N/A
+                        </Text>
+                      </View>
                     </>
                   );
                 })()}
               </>
             )}
           </View>
+          
           {/* Real-time Signal Strength Display */}
           {state.connectionStatus === 'connected' && state.connectedDeviceId && (
             <View style={styles.signalStrengthContainer}>
@@ -241,7 +360,7 @@ export default function Index() {
                 // Find the connected device in the scanned devices array to get its details
                 // Prioritize the connected device from state.savedDevice if available
                 let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
-                
+
                 // If not found in scanned devices, try to get from saved device info
                 if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
                   connectedDevice = {
@@ -251,7 +370,7 @@ export default function Index() {
                     mtu: state.savedDevice.mtu
                   } as any; // Type assertion to match Device interface
                 }
-                
+
                 return connectedDevice ? (
                   <>
                     <Text style={styles.signalStrengthTitle}>Signal Strength:</Text>
@@ -310,6 +429,7 @@ export default function Index() {
               })()}
             </View>
           )}
+          
           {/* Debug Logs for Connection Status */}
           {showDebug && (
             <View style={styles.debugSection}>
@@ -319,7 +439,7 @@ export default function Index() {
               {(() => {
                 // Find the connected device in the scanned devices array to get its details
                 let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
-                
+
                 // If not found in scanned devices, try to get from saved device info
                 if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
                   connectedDevice = {
@@ -329,7 +449,7 @@ export default function Index() {
                     mtu: state.savedDevice.mtu
                   } as any; // Type assertion to match Device interface
                 }
-                
+
                 return (
                   <>
                     <Text style={styles.debugText}>Connected Device Name: {connectedDevice?.name || 'None'}</Text>
@@ -354,18 +474,32 @@ export default function Index() {
           )}
         </View>
 
-        {/* Saved Device Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Saved Device</Text>
+        {/* Saved Device Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="bookmark" size={24} color="#3b82f6" />
+            <Text style={styles.sectionTitle}>Saved Device</Text>
+          </View>
+          
           <View style={styles.savedDeviceContainer}>
             {(() => {
               const savedDevice = state.savedDevice;
               if (savedDevice) {
                 return (
                   <View style={styles.savedDeviceInfo}>
-                    <Text style={styles.savedDeviceName}>Name: {savedDevice.name || 'Unknown Device'}</Text>
-                    <Text style={styles.savedDeviceId}>ID: {savedDevice.id}</Text>
-                    <Text style={styles.savedDeviceRssi}>RSSI: {savedDevice.rssi || 'N/A'} dBm</Text>
+                    <View style={styles.savedDeviceDetailRow}>
+                      <MaterialCommunityIcons name="devices" size={16} color="#94a3b8" />
+                      <Text style={styles.savedDeviceName}>{savedDevice.name || 'Unknown Device'}</Text>
+                    </View>
+                    <View style={styles.savedDeviceDetailRow}>
+                      <MaterialCommunityIcons name="identifier" size={16} color="#94a3b8" />
+                      <Text style={styles.savedDeviceId}>{savedDevice.id}</Text>
+                    </View>
+                    <View style={styles.savedDeviceDetailRow}>
+                      <MaterialCommunityIcons name="signal" size={16} color="#94a3b8" />
+                      <Text style={styles.savedDeviceRssi}>{savedDevice.rssi || 'N/A'} dBm</Text>
+                    </View>
+                    
                     <View style={styles.savedDeviceActions}>
                       <TouchableOpacity
                         style={styles.connectButton}
@@ -381,7 +515,8 @@ export default function Index() {
                           }
                         }}
                       >
-                        <Text style={styles.buttonText}>Connect to Saved Device</Text>
+                        <Ionicons name="bluetooth" size={16} color="#ffffff" />
+                        <Text style={styles.buttonText}> Connect</Text>
                       </TouchableOpacity>
 
                       {state.connectionStatus === 'connected' && state.savedDevice && state.connectedDeviceId && state.savedDevice.id === state.connectedDeviceId && (
@@ -389,7 +524,8 @@ export default function Index() {
                           style={styles.dangerButton}
                           onPress={disconnectFromDevice}
                         >
-                          <Text style={styles.buttonText}>Disconnect</Text>
+                          <Ionicons name="close-circle" size={16} color="#ffffff" />
+                          <Text style={styles.buttonText}> Disconnect</Text>
                         </TouchableOpacity>
                       )}
 
@@ -397,7 +533,8 @@ export default function Index() {
                         style={styles.warningButton}
                         onPress={clearSelectedDevice}
                       >
-                        <Text style={styles.buttonText}>Clear Saved Device</Text>
+                        <Ionicons name="trash" size={16} color="#ffffff" />
+                        <Text style={styles.buttonText}> Clear</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -405,6 +542,7 @@ export default function Index() {
               } else {
                 return (
                   <View style={styles.noSavedDeviceContainer}>
+                    <Ionicons name="bookmark-outline" size={48} color="#64748b" />
                     <Text style={styles.noSavedDeviceText}>No device saved yet</Text>
                     <Text style={styles.smallText}>Select a device from the list below to save it</Text>
                   </View>
@@ -412,6 +550,7 @@ export default function Index() {
               }
             })()}
           </View>
+          
           {/* Debug Logs for Saved Device */}
           {showDebug && (
             <View style={styles.debugSection}>
@@ -426,9 +565,13 @@ export default function Index() {
           )}
         </View>
 
-        {/* Connection Controls */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Connection Controls</Text>
+        {/* Connection Controls Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="settings" size={24} color="#3b82f6" />
+            <Text style={styles.sectionTitle}>Connection Controls</Text>
+          </View>
+          
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={[
@@ -438,8 +581,9 @@ export default function Index() {
               onPress={startScan}
               disabled={state.connectionStatus === 'connecting'}
             >
+              <Ionicons name="bluetooth" size={20} color="#ffffff" />
               <Text style={styles.buttonText}>
-                {state.isScanning ? 'Scanning...' : 'Scan Bluetooth'}
+                {state.isScanning ? ' Scanning...' : ' Scan Bluetooth'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -451,7 +595,8 @@ export default function Index() {
               onPress={stopScan}
               disabled={!state.isScanning}
             >
-              <Text style={styles.buttonText}>Stop Scan</Text>
+              <Ionicons name="stop-circle" size={20} color="#ffffff" />
+              <Text style={styles.buttonText}> Stop Scan</Text>
             </TouchableOpacity>
 
             {/* System Check Controls */}
@@ -462,7 +607,7 @@ export default function Index() {
                 if (state.savedDevice) {
                   // Start scan to detect if saved device is active
                   // Only start scan if not already connected to the saved device
-                  if (state.connectionStatus !== 'connected' || 
+                  if (state.connectionStatus !== 'connected' ||
                       (state.connectionStatus === 'connected' && state.connectedDeviceId !== state.savedDevice.id)) {
                     startScan();
                   }
@@ -472,7 +617,8 @@ export default function Index() {
                 }
               }}
             >
-              <Text style={styles.buttonText}>System Check</Text>
+              <Ionicons name="sync-circle" size={20} color="#ffffff" />
+              <Text style={styles.buttonText}> System Check</Text>
             </TouchableOpacity>
           </View>
 
@@ -485,14 +631,33 @@ export default function Index() {
               ]}
               onPress={toggleAutoConnect}
             >
+              <Ionicons 
+                name={state.autoConnectEnabled ? "link" : "unlink"} 
+                size={20} 
+                color="#ffffff" 
+              />
               <Text style={styles.buttonText}>
                 Auto-Connect: {state.autoConnectEnabled ? 'ON' : 'OFF'}
               </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Debug Visibility Toggle */}
+          {/* Theme Toggle and Debug Visibility Toggle */}
           <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => toggleTheme()}
+            >
+              <Ionicons 
+                name={theme === 'light' ? "moon" : theme === 'dark' ? "phone-portrait" : "contrast"} 
+                size={20} 
+                color="#ffffff" 
+              />
+              <Text style={styles.buttonText}>
+                Theme: {theme.charAt(0).toUpperCase() + theme.slice(1)}
+              </Text>
+            </TouchableOpacity>
+            
             <TouchableOpacity
               style={[
                 styles.secondaryButton,
@@ -500,12 +665,16 @@ export default function Index() {
               ]}
               onPress={() => setShowDebug(!showDebug)}
             >
+              <Ionicons 
+                name={showDebug ? "eye" : "eye-off"} 
+                size={20} 
+                color="#ffffff" 
+              />
               <Text style={styles.buttonText}>
                 Show Debug: {showDebug ? 'ON' : 'OFF'}
               </Text>
             </TouchableOpacity>
           </View>
-
 
           {/* Debug Logs for Connection Controls */}
           {showDebug && (
@@ -519,15 +688,19 @@ export default function Index() {
           )}
         </View>
 
-        {/* Available Bluetooth Devices */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Available Bluetooth Devices</Text>
+        {/* Available Bluetooth Devices Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="bluetooth" size={24} color="#3b82f6" />
+            <Text style={styles.sectionTitle}>Available Bluetooth Devices</Text>
+          </View>
+          
           <View style={styles.devicesContainerScrollable}>
             {state.scannedDevices.length > 0 ? (
               <ScrollView
                 showsVerticalScrollIndicator={false}
                 nestedScrollEnabled={true} // Enable nested scrolling
-                style={{ maxHeight: 250 }} // Set max height for the scroll view
+                style={{ maxHeight: 300 }} // Set max height for the scroll view
               >
                 {state.scannedDevices.map((device, index) => (
                   <BluetoothDeviceItem
@@ -535,11 +708,17 @@ export default function Index() {
                     device={device}
                     onSelect={handleDeviceSelect}
                     onSaveDevice={saveSelectedDevice}
+                    theme={theme}
                   />
                 ))}
               </ScrollView>
             ) : (
               <View style={styles.emptyDevicesContainer}>
+                <MaterialCommunityIcons 
+                  name={state.isScanning ? "bluetooth" : "bluetooth-off"} 
+                  size={48} 
+                  color="#64748b" 
+                />
                 <Text style={styles.emptyDevicesText}>
                   {state.isScanning
                     ? 'Scanning for devices...'
@@ -548,6 +727,7 @@ export default function Index() {
               </View>
             )}
           </View>
+          
           {/* Debug Logs for Available Bluetooth Devices */}
           {showDebug && (
             <View style={styles.debugSection}>
@@ -560,8 +740,12 @@ export default function Index() {
 
         {/* Device Status - Removed contact control button */}
         {state.connectionStatus === 'connected' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Device Status</Text>
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="information-circle" size={24} color="#3b82f6" />
+              <Text style={styles.sectionTitle}>Device Status</Text>
+            </View>
+            
             {/* Debug Logs for Device Status */}
             {showDebug && (
               <View style={styles.debugSection}>
@@ -570,7 +754,7 @@ export default function Index() {
                 {(() => {
                   // Find the connected device in the scanned devices array to get its details
                   let connectedDevice = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
-                  
+
                   // If not found in scanned devices, try to get from saved device info
                   if (!connectedDevice && state.savedDevice && state.connectedDeviceId === state.savedDevice.id) {
                     connectedDevice = {
@@ -580,7 +764,7 @@ export default function Index() {
                       mtu: state.savedDevice.mtu
                     } as any; // Type assertion to match Device interface
                   }
-                  
+
                   return (
                     <Text style={styles.debugText}>Connected Device: {connectedDevice?.name || 'None'}</Text>
                   );
@@ -590,9 +774,13 @@ export default function Index() {
           </View>
         )}
 
-        {/* Activity Log */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Activity Log</Text>
+        {/* Activity Log Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="list" size={24} color="#3b82f6" />
+            <Text style={styles.sectionTitle}>Activity Log</Text>
+          </View>
+          
           <View style={styles.logContainer}>
             <ScrollView
               style={styles.logScrollView}
@@ -605,6 +793,7 @@ export default function Index() {
               ))}
             </ScrollView>
           </View>
+          
           {/* Debug Logs for Activity Log */}
           {showDebug && (
             <View style={styles.debugSection}>
@@ -615,386 +804,495 @@ export default function Index() {
           )}
         </View>
       </ScrollView>
+    </Animated.View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-  },
-  scrollContainer: {
-    paddingBottom: 20,
-  },
-  header: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#e2e8f0',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#94a3b8',
-  },
-  section: {
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#e2e8f0',
-    marginBottom: 10,
-  },
-  statusContainer: {
-    backgroundColor: '#1e293b',
-    padding: 15,
-    borderRadius: 10,
-  },
-  statusText: {
-    fontSize: 16,
-    color: '#cbd5e1',
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  statusValue: {
-    fontWeight: 'bold',
-  },
-  connected: {
-    color: '#4ade80',
-  },
-  connecting: {
-    color: '#fbbf24',
-  },
-  disconnected: {
-    color: '#f87171',
-  },
-  deviceName: {
-    fontSize: 16,
-    color: '#e2e8f0',
-    textAlign: 'left',
-    fontWeight: '600',
-  },
-  deviceAddress: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'left',
-    marginTop: 3,
-  },
-  deviceRssi: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'left',
-    marginTop: 3,
-  },
-  deviceMtu: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'left',
-    marginTop: 3,
-  },
-  ledRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  ledContainer: {
-    alignItems: 'center',
-  },
-  led: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    marginBottom: 5,
-  },
-  ledActive: {
-    backgroundColor: '#4ade80',
-    borderWidth: 1,
-    borderColor: '#16a34a',
-  },
-  ledInactive: {
-    backgroundColor: '#475569',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  ledLabel: {
-    fontSize: 12,
-    color: '#cbd5e1',
-    textAlign: 'center',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  primaryButton: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#3b82f6', // Blue
-    marginRight: 10,
-  },
-  dangerButton: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#ef4444', // Red
-  },
-  secondaryButton: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#64748b', // Gray
-    marginRight: 10,
-  },
-  warningButton: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#f59e0b', // Amber
-  },
-  systemCheckButton: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#8b5cf6', // Purple
-    marginTop: 10,
-  },
-  activeButton: {
-    backgroundColor: '#10b981', // Green when active
-  },
-  controlButton: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  contactOnButton: {
-    backgroundColor: '#dc2626', // Red for ON
-  },
-  contactOffButton: {
-    backgroundColor: '#22c55e', // Green for OFF
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  devicesContainer: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 10,
-    maxHeight: 200,
-  },
-  devicesContainerScrollable: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 10,
-    maxHeight: 300,  // Increased maximum height to show more devices
-    minHeight: 100,  // Increased minimum height to ensure visibility
-    flex: 1,         // Allow flexible sizing
-    overflow: 'hidden', // Ensure content doesn't overflow
-  },
-  deviceItem: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  deviceInfo: {
-    flex: 1,
-  },
-  deviceSignal: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  deviceRssi: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginRight: 8,
-  },
-  signalIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  deviceActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginLeft: 10,
-  },
-  selectButton: {
-    backgroundColor: '#3b82f6', // Blue
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 5,
-  },
-  emptyDevicesContainer: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  emptyDevicesText: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-  },
-  logContainer: {
-    flex: 1,
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 10,
-    minHeight: 150,
-    maxHeight: 200, // Limit height to prevent taking too much space
-  },
-  logScrollView: {
-    flex: 1,
-  },
-  logContent: {
-    paddingVertical: 10,
-  },
-  logEntry: {
-    fontSize: 12,
-    color: '#cbd5e1',
-    marginBottom: 5,
-    fontFamily: 'monospace',
-  },
-  debugSection: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-  },
-  debugTitle: {
-    fontSize: 12,
-    color: '#fbbf24', // Yellow color for debug titles
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  debugText: {
-    fontSize: 11,
-    color: '#94a3b8', // Light gray for debug text
-    fontFamily: 'monospace',
-    marginBottom: 2,
-  },
-  savedDeviceContainer: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 15,
-  },
-  savedDeviceInfo: {
-    alignItems: 'flex-start',
-  },
-  savedDeviceName: {
-    fontSize: 16,
-    color: '#e2e8f0',
-    fontWeight: '600',
-    marginBottom: 5,
-  },
-  savedDeviceId: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginBottom: 5,
-  },
-  savedDeviceRssi: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginBottom: 15,
-  },
-  savedDeviceActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  noSavedDeviceContainer: {
-    alignItems: 'center',
-    padding: 10,
-  },
-  noSavedDeviceText: {
-    fontSize: 16,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  smallText: {
-    fontSize: 12,
-    color: '#64748b',
-    textAlign: 'center',
-  },
-  connectButton: {
-    backgroundColor: '#10b981', // Green
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 5,
-    flex: 1,
-    marginRight: 5,
-    alignItems: 'center',
-  },
-  signalStrengthContainer: {
-    marginTop: 15,
-    alignItems: 'center',
-  },
-  signalStrengthTitle: {
-    fontSize: 14,
-    color: '#e2e8f0',
-    marginBottom: 5,
-    fontWeight: '600',
-  },
-  signalStrengthBar: {
-    width: '100%',
-    height: 10,
-    backgroundColor: '#334155',
-    borderRadius: 5,
-    overflow: 'hidden',
-    marginBottom: 5,
-  },
-  signalStrengthFill: {
-    height: '100%',
-    borderRadius: 5,
-  },
-  signalStrengthValue: {
-    fontSize: 12,
-    color: '#94a3b8',
-    fontWeight: '600',
-  },
-  realTimeSignalDebug: {
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: '#1e293b',
-    borderRadius: 5,
-    width: '100%',
-  },
-  realTimeSignalDebugTitle: {
-    fontSize: 12,
-    color: '#fbbf24', // Yellow color for debug titles
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  realTimeSignalDebugText: {
-    fontSize: 11,
-    color: '#94a3b8', // Light gray for debug text
-    fontFamily: 'monospace',
-    marginBottom: 3,
-  },
-});
+const getStyles = (theme: 'light' | 'dark' | 'oled') => {
+  const isDark = theme === 'dark' || theme === 'oled';
+  const isOled = theme === 'oled';
+  
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: isOled ? '#000000' : 
+                      isDark ? '#121212' : 
+                      '#f8fafc', // Light background for modern look
+    },
+    scrollContainer: {
+      paddingBottom: 20,
+      paddingHorizontal: 16,
+    },
+    header: {
+      paddingVertical: 24,
+      alignItems: 'center',
+      backgroundColor: isOled ? '#000000' : 
+                      isDark ? '#1e1e1e' : 
+                      '#ffffff',
+      borderBottomLeftRadius: 20,
+      borderBottomRightRadius: 20,
+      elevation: 5,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: isDark ? 0.3 : 0.1,
+      shadowRadius: 4,
+      marginBottom: 16,
+    },
+    headerIcon: {
+      marginBottom: 12,
+    },
+    title: {
+      fontSize: 32,
+      fontWeight: '700',
+      color: isDark ? '#e2e8f0' : '#1e293b',
+      marginBottom: 4,
+    },
+    subtitle: {
+      fontSize: 16,
+      color: isDark ? '#94a3b8' : '#64748b',
+      fontWeight: '400',
+    },
+    card: {
+      backgroundColor: isOled ? '#000000' : 
+                      isDark ? '#1e1e1e' : 
+                      '#ffffff',
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 16,
+      elevation: 3,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: isDark ? 0.3 : 0.05,
+      shadowRadius: 4,
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 16,
+      gap: 8,
+    },
+    section: {
+      paddingHorizontal: 20,
+      marginBottom: 20,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: isDark ? '#e2e8f0' : '#1e293b',
+      marginBottom: 10,
+    },
+    statusContainer: {
+      backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+      padding: 16,
+      borderRadius: 12,
+      marginBottom: 16,
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 12,
+    },
+    statusText: {
+      fontSize: 16,
+      color: isDark ? '#cbd5e1' : '#475569',
+      flex: 1,
+    },
+    statusValue: {
+      fontWeight: 'bold',
+    },
+    connected: {
+      color: '#4ade80',
+    },
+    connecting: {
+      color: '#fbbf24',
+    },
+    disconnected: {
+      color: '#f87171',
+    },
+    deviceName: {
+      fontSize: 16,
+      color: isDark ? '#e2e8f0' : '#1e293b',
+      fontWeight: '600',
+      flex: 1,
+    },
+    deviceAddress: {
+      fontSize: 14,
+      color: isDark ? '#94a3b8' : '#64748b',
+      marginTop: 4,
+    },
+    deviceRssi: {
+      fontSize: 14,
+      color: isDark ? '#94a3b8' : '#64748b',
+      marginTop: 4,
+    },
+    deviceMtu: {
+      fontSize: 14,
+      color: isDark ? '#94a3b8' : '#64748b',
+      marginTop: 4,
+    },
+    deviceDetailRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginVertical: 2,
+    },
+    ledRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    ledContainer: {
+      alignItems: 'center',
+      flex: 1,
+    },
+    led: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      marginBottom: 6,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: isDark ? '#374151' : '#e2e8f0',
+    },
+    ledActive: {
+      backgroundColor: isDark ? '#166534' : '#dcfce7',
+      borderWidth: 2,
+      borderColor: isDark ? '#4ade80' : '#4ade80',
+    },
+    ledInactive: {
+      backgroundColor: isDark ? '#4b5563' : '#e2e8f0',
+      borderWidth: 2,
+      borderColor: isDark ? '#6b7280' : '#cbd5e1',
+    },
+    ledLabel: {
+      fontSize: 12,
+      color: isDark ? '#9ca3af' : '#64748b',
+      textAlign: 'center',
+      marginTop: 4,
+    },
+    buttonRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 8,
+      marginBottom: 8,
+    },
+    primaryButton: {
+      flex: 1,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#3b82f6', // Blue
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    dangerButton: {
+      flex: 1,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#ef4444', // Red
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    secondaryButton: {
+      flex: 1,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: isDark ? '#4b5563' : '#64748b', // Gray
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    warningButton: {
+      flex: 1,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#f59e0b', // Amber
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    systemCheckButton: {
+      flex: 1,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#8b5cf6', // Purple
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    activeButton: {
+      backgroundColor: '#10b981', // Green when active
+    },
+    controlButton: {
+      flex: 1,
+      paddingVertical: 15,
+      paddingHorizontal: 20,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    contactOnButton: {
+      backgroundColor: '#dc2626', // Red for ON
+    },
+    contactOffButton: {
+      backgroundColor: '#22c55e', // Green for OFF
+    },
+    buttonText: {
+      color: '#ffffff',
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    disabledButton: {
+      opacity: 0.5,
+    },
+    devicesContainer: {
+      backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+      borderRadius: 12,
+      padding: 12,
+      maxHeight: 200,
+    },
+    devicesContainerScrollable: {
+      backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+      borderRadius: 12,
+      padding: 12,
+      maxHeight: 350,  // Increased maximum height to show more devices
+      minHeight: 120,  // Increased minimum height to ensure visibility
+      flex: 1,         // Allow flexible sizing
+      overflow: 'hidden', // Ensure content doesn't overflow
+    },
+    deviceItem: {
+      padding: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: isDark ? '#374151' : '#e2e8f0',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    deviceInfo: {
+      flex: 1,
+    },
+    deviceHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+    },
+    deviceIcon: {
+      marginRight: 8,
+    },
+    deviceSignal: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    signalStrengthContainer: {
+      marginTop: 12,
+      alignItems: 'center',
+    },
+    signalStrengthTitle: {
+      fontSize: 14,
+      color: isDark ? '#cbd5e1' : '#475569',
+      marginBottom: 6,
+      fontWeight: '500',
+    },
+    signalStrengthBar: {
+      width: '100%',
+      height: 8,
+      backgroundColor: isDark ? '#374151' : '#e2e8f0',
+      borderRadius: 4,
+      overflow: 'hidden',
+      marginBottom: 6,
+    },
+    signalStrengthFill: {
+      height: '100%',
+      borderRadius: 4,
+    },
+    signalStrengthValue: {
+      fontSize: 12,
+      color: isDark ? '#9ca3af' : '#64748b',
+      fontWeight: '500',
+    },
+    signalBar: {
+      width: 4,
+      height: 16,
+      marginHorizontal: 1,
+      borderRadius: 1,
+    },
+    signalBarEmpty: {
+      backgroundColor: isDark ? '#4b5563' : '#cbd5e1',
+    },
+    deviceRssi: {
+      fontSize: 12,
+      color: isDark ? '#9ca3af' : '#64748b',
+      minWidth: 50,
+      textAlign: 'right',
+    },
+    signalStrength: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    deviceActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      marginLeft: 10,
+    },
+    selectButton: {
+      backgroundColor: '#3b82f6', // Blue
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    emptyDevicesContainer: {
+      padding: 24,
+      alignItems: 'center',
+    },
+    emptyDevicesText: {
+      fontSize: 14,
+      color: isDark ? '#9ca3af' : '#64748b',
+      textAlign: 'center',
+      marginTop: 12,
+    },
+    logContainer: {
+      flex: 1,
+      backgroundColor: isDark ? '#1f2937' : '#f8fafc',
+      borderRadius: 12,
+      padding: 12,
+      minHeight: 150,
+      maxHeight: 200, // Limit height to prevent taking too much space
+    },
+    logScrollView: {
+      flex: 1,
+    },
+    logContent: {
+      paddingVertical: 10,
+    },
+    logEntry: {
+      fontSize: 12,
+      color: isDark ? '#d1d5db' : '#475569',
+      marginBottom: 6,
+      fontFamily: 'monospace',
+      lineHeight: 16,
+    },
+    debugSection: {
+      marginTop: 16,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: isDark ? '#374151' : '#e2e8f0',
+      backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+      borderRadius: 8,
+      padding: 12,
+    },
+    debugTitle: {
+      fontSize: 12,
+      color: isDark ? '#fbbf24' : '#ca8a04', // Yellow color for debug titles
+      fontWeight: 'bold',
+      marginBottom: 6,
+    },
+    debugText: {
+      fontSize: 11,
+      color: isDark ? '#9ca3af' : '#64748b', // Light gray for debug text
+      fontFamily: 'monospace',
+      marginBottom: 4,
+    },
+    savedDeviceContainer: {
+      backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+      borderRadius: 12,
+      padding: 16,
+    },
+    savedDeviceInfo: {
+      alignItems: 'flex-start',
+    },
+    savedDeviceName: {
+      fontSize: 16,
+      color: isDark ? '#e2e8f0' : '#1e293b',
+      fontWeight: '600',
+      marginBottom: 4,
+    },
+    savedDeviceId: {
+      fontSize: 14,
+      color: isDark ? '#94a3b8' : '#64748b',
+      marginBottom: 4,
+    },
+    savedDeviceRssi: {
+      fontSize: 14,
+      color: isDark ? '#94a3b8' : '#64748b',
+      marginBottom: 16,
+    },
+    savedDeviceDetailRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginVertical: 2,
+    },
+    savedDeviceActions: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      width: '100%',
+      gap: 8,
+    },
+    noSavedDeviceContainer: {
+      alignItems: 'center',
+      padding: 20,
+    },
+    noSavedDeviceText: {
+      fontSize: 16,
+      color: isDark ? '#9ca3af' : '#64748b',
+      textAlign: 'center',
+      marginBottom: 8,
+    },
+    smallText: {
+      fontSize: 12,
+      color: isDark ? '#6b7280' : '#94a3b8',
+      textAlign: 'center',
+    },
+    connectButton: {
+      backgroundColor: '#10b981', // Green
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 8,
+      flex: 1,
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    realTimeSignalDebug: {
+      marginTop: 12,
+      padding: 12,
+      backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+      borderRadius: 8,
+      width: '100%',
+    },
+    realTimeSignalDebugTitle: {
+      fontSize: 12,
+      color: isDark ? '#fbbf24' : '#ca8a04', // Yellow color for debug titles
+      fontWeight: 'bold',
+      marginBottom: 6,
+    },
+    realTimeSignalDebugText: {
+      fontSize: 11,
+      color: isDark ? '#9ca3af' : '#64748b', // Light gray for debug text
+      fontFamily: 'monospace',
+      marginBottom: 4,
+    },
+  });
+};
