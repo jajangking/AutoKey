@@ -81,8 +81,18 @@ export const useBLE = () => {
           try {
             bleManagerRef.current.destroy();
           } catch (error) {
+            // Handle the specific error that causes the crash
+            let destroyErrorMessage = '';
+            if (error instanceof Error) {
+              destroyErrorMessage = error.message || 'Unknown error';
+              if (destroyErrorMessage.includes('Parameter specified as non-null is null')) {
+                destroyErrorMessage = 'Error destroying BleManager: A known error occurred. This is probably a bug!';
+              }
+            } else {
+              destroyErrorMessage = 'Error destroying BleManager: A known error occurred. This is probably a bug!';
+            }
             console.error('Error destroying BleManager:', error);
-            addLog(`Error destroying BleManager: ${(error as Error).message}`);
+            addLog(`Error destroying BleManager: ${destroyErrorMessage}`);
           }
           bleManagerRef.current = null;
         }
@@ -200,7 +210,17 @@ export const useBLE = () => {
         addLog('Bluetooth is powered on. Starting scan...');
       }
     } catch (error) {
-      addLog(`Error checking Bluetooth state: ${(error as Error).message}`);
+      // Handle the specific error that causes the crash
+      let bluetoothStateErrorMessage = '';
+      if (error instanceof Error) {
+        bluetoothStateErrorMessage = error.message || 'Unknown error';
+        if (bluetoothStateErrorMessage.includes('Parameter specified as non-null is null')) {
+          bluetoothStateErrorMessage = 'Error checking Bluetooth state: A known error occurred. This is probably a bug!';
+        }
+      } else {
+        bluetoothStateErrorMessage = 'Error checking Bluetooth state: A known error occurred. This is probably a bug!';
+      }
+      addLog(bluetoothStateErrorMessage);
       return;
     }
 
@@ -221,18 +241,18 @@ export const useBLE = () => {
           allowDuplicates: false,
         },
         (error: BleError | null, device: Device | null) => {
-          // Handle error case
+          // Handle error case with proper null checks to prevent crashes
           if (error) {
             // Check if the error is related to Bluetooth being off
             if (error.message?.toLowerCase().includes('powered off') ||
                 error.message?.toLowerCase().includes('bluetoothle is powered off')) {
-              addLog(`Bluetooth is powered off: ${error.message}`);
+              addLog(`Bluetooth is powered off: ${error.message || 'Unknown error'}`);
               setState(prev => ({ ...prev, isScanning: false }));
               if (bleManagerRef.current) {
                 try {
                   bleManagerRef.current.stopDeviceScan();
                 } catch (stopError) {
-                  addLog(`Error stopping scan: ${(stopError as Error).message}`);
+                  addLog(`Error stopping scan: ${(stopError as Error)?.message || 'Unknown error'}`);
                 }
               }
               return;
@@ -240,9 +260,14 @@ export const useBLE = () => {
             // Check if the error is related to permissions
             else if (error.message?.toLowerCase().includes('permission') ||
                      error.message?.toLowerCase().includes('authorization')) {
-              addLog(`Permission error: ${error.message}. Please check app permissions.`);
+              addLog(`Permission error: ${error.message || 'Unknown permission error'}. Please check app permissions.`);
             } else {
-              addLog(`Scan error: ${error.message || 'Unknown error'}`);
+              // Handle the specific error that causes the crash
+              let scanErrorMessage = error.message || 'Unknown error';
+              if (scanErrorMessage.includes('Parameter specified as non-null is null')) {
+                scanErrorMessage = 'Scan error: A known error occurred. This is probably a bug!';
+              }
+              addLog(`Scan error: ${scanErrorMessage}`);
             }
 
             setState(prev => ({ ...prev, isScanning: false }));
@@ -250,7 +275,7 @@ export const useBLE = () => {
               try {
                 bleManagerRef.current.stopDeviceScan();
               } catch (stopError) {
-                addLog(`Error stopping scan: ${(stopError as Error).message}`);
+                addLog(`Error stopping scan: ${(stopError as Error)?.message || 'Unknown error'}`);
               }
             }
             return;
@@ -309,7 +334,7 @@ export const useBLE = () => {
                         bleManagerRef.current.stopDeviceScan();
                         addLog('Stopped scanning after finding saved device');
                       } catch (stopError) {
-                        addLog(`Error stopping scan: ${(stopError as Error).message}`);
+                        addLog(`Error stopping scan: ${(stopError as Error)?.message || 'Unknown error'}`);
                       }
                     }
 
@@ -327,7 +352,17 @@ export const useBLE = () => {
         }
       );
     } catch (err) {
-      addLog(`Failed to start scan: ${(err as Error).message}`);
+      // Handle the specific error that causes the crash
+      let scanStartErrorMessage = '';
+      if (err instanceof Error) {
+        scanStartErrorMessage = err.message || 'Unknown error';
+        if (scanStartErrorMessage.includes('Parameter specified as non-null is null')) {
+          scanStartErrorMessage = 'Failed to start scan: A known error occurred. This is probably a bug!';
+        }
+      } else {
+        scanStartErrorMessage = 'Failed to start scan: A known error occurred. This is probably a bug!';
+      }
+      addLog(`Failed to start scan: ${scanStartErrorMessage}`);
       setState(prev => ({ ...prev, isScanning: false }));
     }
   }, [state.isScanning, requestPermissions, addLog, managerInitialized]);
@@ -337,7 +372,7 @@ export const useBLE = () => {
     // Guard: Prevent connecting if already connected or connecting
     if (state.connectionStatus !== 'disconnected') {
       addLog('Already connected or connecting to a device');
-      
+
       // If we're trying to connect to a different device, cancel the current connection first
       if (state.connectedDeviceId && state.connectedDeviceId !== device.id) {
         try {
@@ -409,9 +444,9 @@ export const useBLE = () => {
           connectionStatus: 'connected',
           ledStatus: { ...prev.ledStatus, btConnected: true },
           scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
-            ? prev.scannedDevices.map(d => 
-                d.id === connectedDevice.id ? {...connectedDevice, rssi: d.rssi} : d
-              ) // Update existing device with fresh data but preserve RSSI if available
+            ? prev.scannedDevices.map(d =>
+                d.id === connectedDevice.id ? connectedDevice : d
+              ) // Update existing device with fresh data
             : [...prev.scannedDevices, connectedDevice] // Add device to array
         }));
 
@@ -434,19 +469,31 @@ export const useBLE = () => {
           connectionStatus: 'connected',
           ledStatus: { ...prev.ledStatus, btConnected: true },
           scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
-            ? prev.scannedDevices.map(d => 
-                d.id === connectedDevice.id ? {...connectedDevice, rssi: d.rssi} : d
-              ) // Update existing device with fresh data but preserve RSSI if available
+            ? prev.scannedDevices.map(d =>
+                d.id === connectedDevice.id ? connectedDevice : d
+              ) // Update existing device with fresh data
             : [...prev.scannedDevices, connectedDevice] // Add device to array
         }));
 
         addLog(`Connected to ${connectedDevice.name || connectedDevice.id} (with limited functionality)`);
       }
     } catch (err) {
-      const errorMessage = `Connection failed: ${(err as Error).message}`;
+      // Handle the specific error that causes the crash
+      let errorMessage = '';
+      if (err instanceof Error) {
+        errorMessage = err.message || 'Unknown error';
+        if (errorMessage.includes('Parameter specified as non-null is null')) {
+          errorMessage = 'Connection failed: A known error occurred. This is probably a bug!';
+        } else {
+          errorMessage = `Connection failed: ${errorMessage}`;
+        }
+      } else {
+        errorMessage = 'Connection failed: A known error occurred. This is probably a bug!';
+      }
+
       addLog(errorMessage);
       ErrorHandler.handleError(ErrorType.CONNECTION_TIMEOUT, errorMessage, err);
-      
+
       setState(prev => ({
         ...prev,
         connectionStatus: 'disconnected',
@@ -477,7 +524,11 @@ export const useBLE = () => {
     try {
       // First, unsubscribe from any existing subscription
       if (statusSubscriptionRef.current) {
-        statusSubscriptionRef.current.remove();
+        try {
+          statusSubscriptionRef.current.remove();
+        } catch (unsubscribeError) {
+          addLog(`Error unsubscribing from previous notifications: ${(unsubscribeError as Error)?.message || 'Unknown error'}`);
+        }
         statusSubscriptionRef.current = null;
       }
 
@@ -487,29 +538,38 @@ export const useBLE = () => {
         STATUS_CHARACTERISTIC_UUID,
         (error: BleError | null, characteristic: any | null) => {
           if (error) {
-            addLog(`Notification error: ${error.message}`);
+            // Handle the specific error that causes the crash
+            let notificationErrorMessage = error.message || 'Unknown error';
+            if (notificationErrorMessage.includes('Parameter specified as non-null is null')) {
+              notificationErrorMessage = 'Notification error: A known error occurred. This is probably a bug!';
+            }
+            addLog(notificationErrorMessage);
             return;
           }
 
           if (characteristic?.value) {
-            // Process the received status data
-            // Convert base64 value to bytes
-            const buffer = Uint8Array.from(atob(characteristic.value), c => c.charCodeAt(0));
+            try {
+              // Process the received status data
+              // Convert base64 value to bytes
+              const buffer = Uint8Array.from(atob(characteristic.value), c => c.charCodeAt(0));
 
-            if (buffer.length >= 1) {
-              const statusByte = buffer[0];
+              if (buffer.length >= 1) {
+                const statusByte = buffer[0];
 
-              setState(prev => ({
-                ...prev,
-                contactStatus: (statusByte & 1) !== 0,
-                ledStatus: {
-                  btConnected: prev.ledStatus.btConnected,
-                  ready: (statusByte & 2) !== 0,
-                  wifi: (statusByte & 4) !== 0
-                }
-              }));
+                setState(prev => ({
+                  ...prev,
+                  contactStatus: (statusByte & 1) !== 0,
+                  ledStatus: {
+                    btConnected: prev.ledStatus.btConnected,
+                    ready: (statusByte & 2) !== 0,
+                    wifi: (statusByte & 4) !== 0
+                  }
+                }));
 
-              addLog(`Received status: Contact=${!!(statusByte & 1)}, Ready=${!!(statusByte & 2)}, WiFi=${!!(statusByte & 4)}`);
+                addLog(`Received status: Contact=${!!(statusByte & 1)}, Ready=${!!(statusByte & 2)}, WiFi=${!!(statusByte & 4)}`);
+              }
+            } catch (processError) {
+              addLog(`Error processing notification: ${(processError as Error)?.message || 'Unknown error'}`);
             }
           }
         }
@@ -519,7 +579,17 @@ export const useBLE = () => {
       statusSubscriptionRef.current = subscription;
       addLog('Subscribed to status notifications');
     } catch (err) {
-      addLog(`Failed to subscribe to notifications: ${(err as Error).message}`);
+      // Handle the specific error that causes the crash
+      let subscribeErrorMessage = '';
+      if (err instanceof Error) {
+        subscribeErrorMessage = err.message || 'Unknown error';
+        if (subscribeErrorMessage.includes('Parameter specified as non-null is null')) {
+          subscribeErrorMessage = 'Failed to subscribe to notifications: A known error occurred. This is probably a bug!';
+        }
+      } else {
+        subscribeErrorMessage = 'Failed to subscribe to notifications: A known error occurred. This is probably a bug!';
+      }
+      addLog(`Failed to subscribe to notifications: ${subscribeErrorMessage}`);
     }
   }, [addLog]);
 
@@ -556,7 +626,17 @@ export const useBLE = () => {
 
       return true;
     } catch (err) {
-      addLog(`Failed to send command: ${(err as Error).message}`);
+      // Handle the specific error that causes the crash
+      let sendCommandErrorMessage = '';
+      if (err instanceof Error) {
+        sendCommandErrorMessage = err.message || 'Unknown error';
+        if (sendCommandErrorMessage.includes('Parameter specified as non-null is null')) {
+          sendCommandErrorMessage = 'Failed to send command: A known error occurred. This is probably a bug!';
+        }
+      } else {
+        sendCommandErrorMessage = 'Failed to send command: A known error occurred. This is probably a bug!';
+      }
+      addLog(sendCommandErrorMessage);
       return false;
     }
   }, [state.connectionStatus, addLog]);
@@ -592,7 +672,11 @@ export const useBLE = () => {
     try {
       // Remove notification subscription
       if (statusSubscriptionRef.current) {
-        statusSubscriptionRef.current.remove();
+        try {
+          statusSubscriptionRef.current.remove();
+        } catch (unsubscribeError) {
+          addLog(`Error removing notification subscription: ${(unsubscribeError as Error)?.message || 'Unknown error'}`);
+        }
         statusSubscriptionRef.current = null;
       }
 
@@ -610,11 +694,21 @@ export const useBLE = () => {
         contactStatus: false
       }));
       addLog(`Disconnected from device ID: ${state.connectedDeviceId}`);
-      ErrorHandler.handleError(ErrorType.DISCONNECTED, `Disconnected from device ID: ${state.connectedDeviceId}`);
+      // Don't treat intentional disconnections as errors
+      // ErrorHandler.handleError(ErrorType.DISCONNECTED, `Disconnected from device ID: ${state.connectedDeviceId}`);
     } catch (err) {
-      const errorMessage = `Disconnect error: ${(err as Error).message}`;
-      addLog(errorMessage);
-      ErrorHandler.handleError(ErrorType.UNKNOWN, errorMessage, err);
+      // Handle the specific error that causes the crash
+      let disconnectErrorMessage = '';
+      if (err instanceof Error) {
+        disconnectErrorMessage = err.message || 'Unknown error';
+        if (disconnectErrorMessage.includes('Parameter specified as non-null is null')) {
+          disconnectErrorMessage = 'Disconnect error: A known error occurred. This is probably a bug!';
+        }
+      } else {
+        disconnectErrorMessage = 'Disconnect error: A known error occurred. This is probably a bug!';
+      }
+      addLog(disconnectErrorMessage);
+      ErrorHandler.handleError(ErrorType.UNKNOWN, disconnectErrorMessage, err);
     }
   }, [state.connectedDeviceId, addLog, managerInitialized]);
 
@@ -626,13 +720,16 @@ export const useBLE = () => {
 
     const subscription = bleManagerRef.current.onDeviceDisconnected(
       state.connectedDeviceId || '', // Device ID to listen for disconnection
-      (error: BleError | null, device: Device) => {
+      (error: BleError | null, device: Device | null) => {
         if (error) {
-          // Handle disconnection error
-          const errorMessage = `Device disconnection error: ${error.message}`;
+          // Handle disconnection error with proper null checks
+          let errorMessage = error.message || 'Unknown error';
+          if (errorMessage.includes('Parameter specified as non-null is null')) {
+            errorMessage = 'Device disconnection error: A known error occurred. This is probably a bug!';
+          }
           addLog(errorMessage);
           ErrorHandler.handleError(ErrorType.DISCONNECTED, errorMessage, error);
-        } else {
+        } else if (device) {
           console.log('Device disconnected event triggered:', device.id, 'Expected:', state.connectedDeviceId);
           if (device.id === state.connectedDeviceId) {
             addLog(`Device disconnected: ${device.name || device.id}`);
@@ -653,6 +750,9 @@ export const useBLE = () => {
                 addLog('Auto-connect enabled: starting scan after disconnection');
                 startScan();
               }, 2000);
+            } else {
+              // Only log for unexpected disconnections (not intentional ones)
+              console.log('Device disconnected unexpectedly:', device.id);
             }
           }
         }
@@ -660,7 +760,11 @@ export const useBLE = () => {
     );
 
     return () => {
-      subscription?.remove();
+      try {
+        subscription?.remove();
+      } catch (cleanupError) {
+        addLog(`Error cleaning up disconnection subscription: ${(cleanupError as Error)?.message || 'Unknown error'}`);
+      }
     };
   }, [state.connectedDeviceId, startScan, addLog, managerInitialized]);
 
@@ -677,7 +781,7 @@ export const useBLE = () => {
             if (!isActuallyConnected) {
               console.log('Device reported as connected but actually disconnected');
               addLog(`Device ID ${state.connectedDeviceId} is no longer connected`);
-              
+
               // Clear the device reference
               connectedDeviceRef.current = null;
 
@@ -700,13 +804,24 @@ export const useBLE = () => {
             }
           }
         } catch (error) {
+          // Handle the specific error that causes the crash
+          let connectionCheckErrorMessage = '';
+          if (error instanceof Error) {
+            connectionCheckErrorMessage = error.message || 'Unknown error';
+            if (connectionCheckErrorMessage.includes('Parameter specified as non-null is null')) {
+              connectionCheckErrorMessage = 'Error checking connection status: A known error occurred. This is probably a bug!';
+            }
+          } else {
+            connectionCheckErrorMessage = 'Error checking connection status: A known error occurred. This is probably a bug!';
+          }
+          
           console.error('Error checking connection status:', error);
           // If we can't check the connection status, assume it's disconnected
-          addLog(`Error checking connection status, assuming disconnected`);
-          
+          addLog(connectionCheckErrorMessage);
+
           // Clear the device reference
           connectedDeviceRef.current = null;
-          
+
           // Update state to reflect disconnection
           setState(prev => ({
             ...prev,
@@ -730,7 +845,11 @@ export const useBLE = () => {
     // Cleanup function
     return () => {
       if (monitorInterval) {
-        clearInterval(monitorInterval);
+        try {
+          clearInterval(monitorInterval);
+        } catch (clearError) {
+          addLog(`Error clearing connection monitor interval: ${(clearError as Error)?.message || 'Unknown error'}`);
+        }
       }
     };
   }, [state.connectionStatus, state.connectedDeviceId]);
@@ -749,7 +868,9 @@ export const useBLE = () => {
           // GUARD: Check if device exists and is connected before reading RSSI
           if (!deviceInstance) {
             console.log('No device instance available, stopping RSSI polling');
-            clearInterval(rssiIntervalId);
+            if (rssiIntervalId) {
+              clearInterval(rssiIntervalId);
+            }
             return;
           }
           
@@ -757,29 +878,41 @@ export const useBLE = () => {
           const isConnected = await deviceInstance.isConnected();
           if (!isConnected) {
             console.log('Device is not connected, stopping RSSI polling');
-            clearInterval(rssiIntervalId);
+            if (rssiIntervalId) {
+              clearInterval(rssiIntervalId);
+            }
             return;
           }
 
           // Read RSSI from connected device (MUST use device.readRSSI())
           const rssiResult = await deviceInstance.readRSSI();
-          // Extract the RSSI value from the result
-          const rssiValue = typeof rssiResult === 'object' && rssiResult.hasOwnProperty('rssi')
-            ? rssiResult.rssi
-            : rssiResult;
+          // Extract the RSSI value from the result - ensure it's a number
+          let rssiValue: number | undefined;
+          if (typeof rssiResult === 'object' && rssiResult && 'rssi' in rssiResult) {
+            rssiValue = rssiResult.rssi as number;
+          } else if (typeof rssiResult === 'number') {
+            rssiValue = rssiResult;
+          }
 
           // Update the device's RSSI property in the scannedDevices array for UI display
-          setState(prev => ({
-            ...prev,
-            scannedDevices: prev.scannedDevices.map(d =>
-              d.id === deviceInstance.id ? {...d, rssi: rssiValue} : d
-            ),
-            // Also update the saved device RSSI if this is the connected device
-            savedDevice: prev.savedDevice && prev.savedDevice.id === deviceInstance.id 
-              ? {...prev.savedDevice, rssi: rssiValue} 
-              : prev.savedDevice,
-            rssiUpdateCounter: prev.rssiUpdateCounter + 1
-          }));
+          if (rssiValue !== undefined) {
+            setState(prev => ({
+              ...prev,
+              scannedDevices: prev.scannedDevices.map(d =>
+                d.id === deviceInstance.id ? Object.assign({}, d, { rssi: rssiValue }) : d
+              ),
+              // Also update the saved device RSSI if this is the connected device
+              savedDevice: prev.savedDevice && prev.savedDevice.id === deviceInstance.id && rssiValue !== undefined
+                ? { 
+                    id: prev.savedDevice.id,
+                    name: prev.savedDevice.name,
+                    rssi: rssiValue,
+                    mtu: prev.savedDevice.mtu
+                  }
+                : prev.savedDevice,
+              rssiUpdateCounter: prev.rssiUpdateCounter + 1
+            }));
+          }
         } catch (error) {
           // Stop RSSI polling on error to prevent "Unknown error occurred" spam
           console.log(`RSSI reading error, stopping polling: ${(error as Error).message}`);
@@ -840,7 +973,17 @@ export const useBLE = () => {
             }
           }
         } catch (error) {
-          addLog(`Error checking device connection: ${(error as Error).message}`);
+          // Handle the specific error that causes the crash
+          let connectionMonitorErrorMessage = '';
+          if (error instanceof Error) {
+            connectionMonitorErrorMessage = error.message || 'Unknown error';
+            if (connectionMonitorErrorMessage.includes('Parameter specified as non-null is null')) {
+              connectionMonitorErrorMessage = 'Error checking device connection: A known error occurred. This is probably a bug!';
+            }
+          } else {
+            connectionMonitorErrorMessage = 'Error checking device connection: A known error occurred. This is probably a bug!';
+          }
+          addLog(`Error checking device connection: ${connectionMonitorErrorMessage}`);
         }
       }, 2000); // Check connection status every 2 seconds
     }
@@ -848,7 +991,11 @@ export const useBLE = () => {
     // Cleanup function
     return () => {
       if (connectionMonitorId) {
-        clearInterval(connectionMonitorId);
+        try {
+          clearInterval(connectionMonitorId);
+        } catch (clearError) {
+          addLog(`Error clearing connection monitor interval: ${(clearError as Error)?.message || 'Unknown error'}`);
+        }
       }
     };
   }, [state.connectionStatus, state.autoConnectEnabled, startScan]);
@@ -910,7 +1057,7 @@ export const useBLE = () => {
 
         if (bluetoothState === State.PoweredOn) {
           addLog('Bluetooth is powered on. Ready to scan when user initiates.');
-        } else if (bluetoothState !== State.PoweredOn && state.connectionStatus === 'connected') {
+        } else if (state.connectionStatus === 'connected') {
           // If Bluetooth is turned off while connected, update the state
           setState(prev => ({
             ...prev,
@@ -919,7 +1066,7 @@ export const useBLE = () => {
             ledStatus: { ...prev.ledStatus, btConnected: false }
           }));
           addLog(`Bluetooth turned off. Connection status: ${bluetoothState}`);
-        } else if (bluetoothState === State.PoweredOn && state.connectionStatus === 'disconnected' && state.autoConnectEnabled && state.savedDevice) {
+        } else if (state.autoConnectEnabled && state.savedDevice) {
           // If Bluetooth is turned back on and auto-connect is enabled, start scanning for saved device
           addLog('Bluetooth powered on and auto-connect enabled: starting scan for saved device');
           setTimeout(() => {
@@ -931,7 +1078,11 @@ export const useBLE = () => {
 
     // Cleanup function
     return () => {
-      subscription.remove();
+      try {
+        subscription.remove();
+      } catch (cleanupError) {
+        addLog(`Error cleaning up Bluetooth state subscription: ${(cleanupError as Error)?.message || 'Unknown error'}`);
+      }
       lastBluetoothState = null;
     };
   }, [state.connectionStatus, state.connectedDeviceId, state.isScanning, startScan, addLog, managerInitialized]);
@@ -957,10 +1108,18 @@ export const useBLE = () => {
     // Cleanup on unmount
     return () => {
       if (bleManagerRef.current) {
-        bleManagerRef.current.stopDeviceScan();
+        try {
+          bleManagerRef.current.stopDeviceScan();
+        } catch (scanStopError) {
+          addLog(`Error stopping scan during cleanup: ${(scanStopError as Error)?.message || 'Unknown error'}`);
+        }
       }
       if (statusSubscriptionRef.current) {
-        statusSubscriptionRef.current.remove();
+        try {
+          statusSubscriptionRef.current.remove();
+        } catch (subscriptionRemoveError) {
+          addLog(`Error removing subscription during cleanup: ${(subscriptionRemoveError as Error)?.message || 'Unknown error'}`);
+        }
       }
     };
   }, [managerInitialized, addLog]);
@@ -971,7 +1130,7 @@ export const useBLE = () => {
       const deviceInfo = {
         id: device.id,
         name: device.name || '',
-        rssi: device.rssi,
+        rssi: device.rssi !== null ? device.rssi : undefined,
         mtu: device.mtu
       };
       await AsyncStorage.setItem('selected_device', JSON.stringify(deviceInfo));
@@ -1041,7 +1200,17 @@ export const useBLE = () => {
         setState(prev => ({ ...prev, isScanning: false }));
         addLog('Scanning stopped by user');
       } catch (error) {
-        addLog(`Failed to stop scanning: ${(error as Error).message}`);
+        // Handle the specific error that causes the crash
+        let stopScanErrorMessage = '';
+        if (error instanceof Error) {
+          stopScanErrorMessage = error.message || 'Unknown error';
+          if (stopScanErrorMessage.includes('Parameter specified as non-null is null')) {
+            stopScanErrorMessage = 'Failed to stop scanning: A known error occurred. This is probably a bug!';
+          }
+        } else {
+          stopScanErrorMessage = 'Failed to stop scanning: A known error occurred. This is probably a bug!';
+        }
+        addLog(`Failed to stop scanning: ${stopScanErrorMessage}`);
       }
     } else {
       addLog('No active scan to stop');

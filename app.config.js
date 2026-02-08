@@ -1,11 +1,52 @@
 // Prebuild configuration for Expo
 // This file is executed before the build process begins
 
-export default (config) => {
-  // Return the config with all properties preserved
-  return {
-    ...config,
-    // Ensure scheme is preserved from app.json
-    scheme: config.scheme || "autokey",
-  };
+export default {
+  name: "AutoKey",
+  slug: "AutoKey",
+  version: "1.0.0",
+  orientation: "portrait",
+  icon: "./assets/images/icon.png",
+  scheme: "autokey",
+  userInterfaceStyle: "automatic",
+  newArchEnabled: true,
+  ios: {
+    supportsTablet: true,
+    bundleIdentifier: "com.jajang.AutoKey"
+  },
+  android: {
+    adaptiveIcon: {
+      backgroundColor: "#E6F4FE",
+      foregroundImage: "./assets/images/android-icon-foreground.png",
+      backgroundImage: "./assets/images/android-icon-background.png",
+      monochromeImage: "./assets/images/android-icon-monochrome.png"
+    },
+    edgeToEdgeEnabled: true,
+    predictiveBackGestureEnabled: false,
+    package: "com.jajang.autokey"
+  },
+  web: {
+    output: "static",
+    favicon: "./assets/images/favicon.png"
+  },
+  plugins: [
+    "expo-router",
+    [
+      "expo-splash-screen",
+      {
+        image: "./assets/images/splash-icon.png",
+        imageWidth: 200,
+        resizeMode: "contain",
+        backgroundColor: "#ffffff",
+        dark: {
+          backgroundColor: "#000000"
+        }
+      }
+    ],
+    "react-native-ble-plx"
+  ],
+  experiments: {
+    typedRoutes: true,
+    reactCompiler: true
+  }
 };
