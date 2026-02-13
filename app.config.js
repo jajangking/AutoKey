@@ -12,7 +12,12 @@ export default {
   newArchEnabled: true,
   ios: {
     supportsTablet: true,
-    bundleIdentifier: "com.jajang.AutoKey"
+    bundleIdentifier: "com.jajang.AutoKey",
+    infoPlist: {
+      UIBackgroundModes: ['bluetooth-central', 'bluetooth-peripheral'],
+      NSBluetoothAlwaysUsageDescription: "This app uses Bluetooth to connect to your motorcycle key system.",
+      NSBluetoothPeripheralUsageDescription: "This app uses Bluetooth to connect to your motorcycle key system."
+    }
   },
   android: {
     adaptiveIcon: {
@@ -23,7 +28,18 @@ export default {
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
-    package: "com.jajang.autokey"
+    package: "com.jajang.autokey",
+    permissions: [
+      'android.permission.BLUETOOTH',
+      'android.permission.BLUETOOTH_ADMIN',
+      'android.permission.ACCESS_FINE_LOCATION',
+      'android.permission.ACCESS_COARSE_LOCATION',
+      'android.permission.WAKE_LOCK',
+      'android.permission.FOREGROUND_SERVICE',
+      'android.permission.BLUETOOTH_ADVERTISE',
+      'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.BLUETOOTH_SCAN'
+    ]
   },
   web: {
     output: "static",

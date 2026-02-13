@@ -19,6 +19,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { Device } from 'react-native-ble-plx';
 import ErrorDisplay from '@/components/ErrorDisplay';
 import BluetoothDeviceItem from '@/components/BluetoothDeviceItem';
+import { router } from 'expo-router';
 
 // Function to determine signal strength color
 const getSignalColor = (rssi: number | undefined) => {
@@ -59,7 +60,8 @@ export default function Index() {
     loadSelectedDevice,
     clearSelectedDevice,
     addLog,
-    toggleAutoConnect
+    toggleAutoConnect,
+    resetScannedDevices
   } = useBLE();
   
   const { theme, toggleTheme } = useTheme();
@@ -82,7 +84,7 @@ export default function Index() {
 
   // Update real-time signal timestamp every second when connected
   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
+    let intervalId: number | NodeJS.Timeout | null = null;
 
     if (state.connectionStatus === 'connected' && state.connectedDeviceId) {
       intervalId = setInterval(() => {
@@ -635,6 +637,35 @@ export default function Index() {
             </TouchableOpacity>
           </View>
 
+          {/* Reset Bluetooth Devices List */}
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={async () => {
+                // Reset the scanned devices list using the hook function
+                resetScannedDevices();
+                
+                // Also stop any ongoing scans before starting a fresh scan
+                if (state.isScanning) {
+                  stopScan();
+                  addLog('Stopped ongoing scan');
+                }
+                
+                // Add log entry
+                addLog('Bluetooth device list reset, ready for fresh scan');
+                
+                // Optionally start a new scan automatically after reset
+                setTimeout(() => {
+                  startScan();
+                  addLog('Started fresh scan after reset');
+                }, 1000);
+              }}
+            >
+              <Ionicons name="reload" size={20} color="#ffffff" />
+              <Text style={styles.buttonText}> Reset Bluetooth List</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Debug Logs for Connection Controls */}
           {showDebug && (
             <View style={styles.debugSection}>
@@ -739,7 +770,7 @@ export default function Index() {
             <Ionicons name="list" size={24} color="#3b82f6" />
             <Text style={styles.sectionTitle}>Activity Log</Text>
           </View>
-          
+
           <View style={styles.logContainer}>
             <ScrollView
               style={styles.logScrollView}
@@ -751,7 +782,7 @@ export default function Index() {
               ))}
             </ScrollView>
           </View>
-          
+
           {/* Debug Logs for Activity Log */}
           {showDebug && (
             <View style={styles.debugSection}>
@@ -761,6 +792,15 @@ export default function Index() {
             </View>
           )}
         </View>
+
+        {/* Settings Button */}
+        <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={() => router.push('/settings')}
+        >
+          <Ionicons name="settings-outline" size={20} color="#ffffff" />
+          <Text style={styles.buttonText}> Settings</Text>
+        </TouchableOpacity>
       </ScrollView>
     </Animated.View>
     <ErrorDisplay 
@@ -1255,6 +1295,29 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       color: isDark ? '#9ca3af' : '#64748b', // Light gray for debug text
       fontFamily: 'monospace',
       marginBottom: 4,
+    },
+    settingsButton: {
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#6366f1', // Indigo
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+      marginTop: 16,
+      marginHorizontal: 16,
+    },
+    resetButton: {
+      flex: 1,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#f59e0b', // Amber
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
     },
   });
 };

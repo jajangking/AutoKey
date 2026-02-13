@@ -50,12 +50,31 @@ export const useBLE = () => {
     }));
   }, []);
 
+  // Load settings from AsyncStorage when initializing
+  useEffect(() => {
+    const loadInitialSettings = async () => {
+      try {
+        const autoConnectEnabled = await AsyncStorage.getItem('autoConnectEnabled');
+        if (autoConnectEnabled !== null) {
+          setState(prev => ({
+            ...prev,
+            autoConnectEnabled: autoConnectEnabled === 'true'
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load initial settings:', error);
+      }
+    };
+
+    loadInitialSettings();
+  }, []);
+
   // Initialize BleManager only on the client side after native modules are available
   useEffect(() => {
     // Only initialize on the client side (mobile device)
     if (typeof window !== 'undefined') {
       // Wait a bit to ensure native modules are loaded
-      const timer = setTimeout(() => {
+      const timer: number | NodeJS.Timeout = setTimeout(() => {
         try {
           if (!bleManagerRef.current) {
             bleManagerRef.current = new BleManager();
@@ -504,7 +523,7 @@ export const useBLE = () => {
       // If auto-connect is enabled, restart scanning to try again when device becomes available
       if (state.autoConnectEnabled && state.savedDevice) {
         addLog('Auto-connect enabled: restarting scan after connection failure');
-        setTimeout(() => {
+        const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
           // Only start scanning if not already connected and not currently scanning
           if (state.connectionStatus === 'disconnected' && !state.isScanning) {
             startScan();
@@ -746,7 +765,7 @@ export const useBLE = () => {
 
             // Automatically start scanning again after a delay if auto-connect is enabled
             if (state.autoConnectEnabled) {
-              setTimeout(() => {
+              const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
                 addLog('Auto-connect enabled: starting scan after disconnection');
                 startScan();
               }, 2000);
@@ -770,7 +789,7 @@ export const useBLE = () => {
 
   // Monitor connection state changes more proactively
   useEffect(() => {
-    let monitorInterval: NodeJS.Timeout | null = null;
+    let monitorInterval: number | NodeJS.Timeout | null = null;
 
     if (state.connectionStatus === 'connected' && state.connectedDeviceId) {
       monitorInterval = setInterval(async () => {
@@ -796,7 +815,7 @@ export const useBLE = () => {
 
               // Automatically start scanning again after a delay if auto-connect is enabled
               if (state.autoConnectEnabled) {
-                setTimeout(() => {
+                const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
                   addLog('Auto-connect enabled: starting scan after connection status monitor detected disconnection');
                   startScan();
                 }, 2000);
@@ -810,36 +829,72 @@ export const useBLE = () => {
             connectionCheckErrorMessage = error.message || 'Unknown error';
             if (connectionCheckErrorMessage.includes('Parameter specified as non-null is null')) {
               connectionCheckErrorMessage = 'Error checking connection status: A known error occurred. This is probably a bug!';
+            } else {
+              connectionCheckErrorMessage = `Error checking connection status: ${connectionCheckErrorMessage}`;
             }
           } else {
             connectionCheckErrorMessage = 'Error checking connection status: A known error occurred. This is probably a bug!';
           }
-          
-          console.error('Error checking connection status:', error);
-          // If we can't check the connection status, assume it's disconnected
+
           addLog(connectionCheckErrorMessage);
+          console.error('Error checking connection status:', error);
 
-          // Clear the device reference
-          connectedDeviceRef.current = null;
+          // Rather than immediately disconnecting, we'll try to verify the connection status
+          // Sometimes temporary network issues can cause this check to fail
+          try {
+            if (bleManagerRef.current && state.connectedDeviceId) {
+              // Double-check the connection status
+              const doubleCheck = await bleManagerRef.current.isDeviceConnected(state.connectedDeviceId);
+              if (!doubleCheck) {
+                // Confirmed: device is disconnected
+                // Clear the device reference
+                connectedDeviceRef.current = null;
 
-          // Update state to reflect disconnection
-          setState(prev => ({
-            ...prev,
-            connectedDeviceId: null,
-            connectionStatus: 'disconnected',
-            ledStatus: { btConnected: false, ready: false, wifi: false },
-            contactStatus: false
-          }));
+                // Update state to reflect disconnection
+                setState(prev => ({
+                  ...prev,
+                  connectedDeviceId: null,
+                  connectionStatus: 'disconnected',
+                  ledStatus: { btConnected: false, ready: false, wifi: false },
+                  contactStatus: false
+                }));
 
-          // Automatically start scanning again after a delay if auto-connect is enabled
-          if (state.autoConnectEnabled) {
-            setTimeout(() => {
-              addLog('Auto-connect enabled: starting scan after connection status error');
-              startScan();
-            }, 2000);
+                // Automatically start scanning again after a delay if auto-connect is enabled
+                if (state.autoConnectEnabled) {
+                  const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
+                    addLog('Auto-connect enabled: starting scan after connection status error');
+                    startScan();
+                  }, 2000);
+                }
+              } else {
+                // The connection is still good, just had a temporary issue
+                addLog('Connection check recovered - connection still active');
+              }
+            }
+          } catch (doubleCheckError) {
+            console.log('Double check also failed:', (doubleCheckError as Error).message);
+            // If double check also fails, assume disconnection
+            connectedDeviceRef.current = null;
+
+            // Update state to reflect disconnection
+            setState(prev => ({
+              ...prev,
+              connectedDeviceId: null,
+              connectionStatus: 'disconnected',
+              ledStatus: { btConnected: false, ready: false, wifi: false },
+              contactStatus: false
+            }));
+
+            // Automatically start scanning again after a delay if auto-connect is enabled
+            if (state.autoConnectEnabled) {
+              const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
+                addLog('Auto-connect enabled: starting scan after connection status error');
+                startScan();
+              }, 2000);
+            }
           }
         }
-      }, 2000); // Check every 2 seconds
+      }, 3000); // Check every 3 seconds to be less aggressive
     }
 
     // Cleanup function
@@ -856,7 +911,7 @@ export const useBLE = () => {
 
   // RSSI reading loop - reads RSSI from connected device every 300-500ms
   useEffect(() => {
-    let rssiIntervalId: NodeJS.Timeout | null = null;
+    let rssiIntervalId: number | NodeJS.Timeout | null = null;
 
     if (connectedDeviceRef.current && state.connectionStatus === 'connected') {
       // Start RSSI reading loop when device is connected
@@ -933,7 +988,7 @@ export const useBLE = () => {
 
   // Separate effect to monitor connection status and handle disconnections
   useEffect(() => {
-    let connectionMonitorId: NodeJS.Timeout | null = null;
+    let connectionMonitorId: number | NodeJS.Timeout | null = null;
 
     if (connectedDeviceRef.current && state.connectionStatus === 'connected') {
       // Start monitoring connection status separately
@@ -966,7 +1021,7 @@ export const useBLE = () => {
 
             // Automatically start scanning again after a delay if auto-connect is enabled
             if (state.autoConnectEnabled) {
-              setTimeout(() => {
+              const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
                 addLog('Auto-connect enabled: starting scan after connection monitor detected disconnection');
                 startScan();
               }, 2000);
@@ -1069,7 +1124,7 @@ export const useBLE = () => {
         } else if (state.autoConnectEnabled && state.savedDevice) {
           // If Bluetooth is turned back on and auto-connect is enabled, start scanning for saved device
           addLog('Bluetooth powered on and auto-connect enabled: starting scan for saved device');
-          setTimeout(() => {
+          const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
             startScan();
           }, 1000); // Small delay to ensure Bluetooth is fully ready
         }
@@ -1218,10 +1273,15 @@ export const useBLE = () => {
   }, [state.isScanning, addLog]);
 
   // Function to enable/disable auto-connect
-  const toggleAutoConnect = useCallback(() => {
+  const toggleAutoConnect = useCallback(async () => {
     setState(prev => {
       const newAutoConnectStatus = !prev.autoConnectEnabled;
       addLog(`Auto-connect ${newAutoConnectStatus ? 'enabled' : 'disabled'}`);
+      
+      // Save the new auto-connect status to AsyncStorage
+      AsyncStorage.setItem('autoConnectEnabled', newAutoConnectStatus.toString())
+        .catch(error => console.error('Failed to save auto-connect setting:', error));
+      
       return { ...prev, autoConnectEnabled: newAutoConnectStatus };
     });
   }, [addLog]);
@@ -1234,12 +1294,21 @@ export const useBLE = () => {
     }
   }, [state.autoConnectEnabled, state.savedDevice, connectToDevice, addLog]);
 
+// Function to reset the list of scanned devices
+const resetScannedDevices = useCallback(() => {
+  setState(prev => ({
+    ...prev,
+    scannedDevices: []
+  }));
+  addLog('Scanned devices list reset');
+}, [addLog]);
+
   return {
     state,
     startScan,
     stopScan,
-    connectToDevice,
     disconnectFromDevice,
+    connectToDevice,
     toggleContact,
     sendCommand,
     addLog,
@@ -1248,6 +1317,7 @@ export const useBLE = () => {
     loadSelectedDevice,
     clearSelectedDevice,
     toggleAutoConnect,
-    attemptAutoConnect
+    attemptAutoConnect,
+    resetScannedDevices
   };
 };
