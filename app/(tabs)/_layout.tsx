@@ -14,8 +14,8 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: theme === 'oled' ? Colors.oled.tint : 
-                             theme === 'dark' ? Colors.dark.tint : 
+        tabBarActiveTintColor: theme === 'oled' ? Colors.oled.tint :
+                             theme === 'dark' ? Colors.dark.tint :
                              Colors.light.tint,
         headerShown: false,
         tabBarButton: HapticTab,
@@ -25,6 +25,13 @@ export default function TabLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="control"
+        options={{
+          title: 'Control',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gamecontroller" color={color} />,
         }}
       />
       <Tabs.Screen

@@ -20,6 +20,7 @@ import { Device } from 'react-native-ble-plx';
 import ErrorDisplay from '@/components/ErrorDisplay';
 import BluetoothDeviceItem from '@/components/BluetoothDeviceItem';
 import { router } from 'expo-router';
+import SettingsModal from '@/components/SettingsModal';
 
 // Function to determine signal strength color
 const getSignalColor = (rssi: number | undefined) => {
@@ -61,7 +62,11 @@ export default function Index() {
     clearSelectedDevice,
     addLog,
     toggleAutoConnect,
-    resetScannedDevices
+    resetScannedDevices,
+    sendRelayCH1Command,
+    sendRelayCH2Command,
+    sendBuzzerCommand,
+    sendLEDCommand
   } = useBLE();
   
   const { theme, toggleTheme } = useTheme();
@@ -81,6 +86,9 @@ export default function Index() {
 
   // State for real-time signal debug timestamp
   const [realTimeSignalTimestamp, setRealTimeSignalTimestamp] = useState(new Date());
+
+  // State for settings modal
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Update real-time signal timestamp every second when connected
   useEffect(() => {
@@ -796,16 +804,25 @@ export default function Index() {
         {/* Settings Button */}
         <TouchableOpacity
           style={styles.settingsButton}
-          onPress={() => router.push('/settings')}
+          onPress={() => setShowSettingsModal(true)}
         >
           <Ionicons name="settings-outline" size={20} color="#ffffff" />
           <Text style={styles.buttonText}> Settings</Text>
         </TouchableOpacity>
       </ScrollView>
     </Animated.View>
-    <ErrorDisplay 
-      visible={showErrorDisplay} 
-      onClose={() => setShowErrorDisplay(false)} 
+    <ErrorDisplay
+      visible={showErrorDisplay}
+      onClose={() => setShowErrorDisplay(false)}
+    />
+    <SettingsModal
+      visible={showSettingsModal}
+      onClose={() => setShowSettingsModal(false)}
+      bleState={state}
+      sendRelayCH1Command={sendRelayCH1Command}
+      sendRelayCH2Command={sendRelayCH2Command}
+      sendBuzzerCommand={sendBuzzerCommand}
+      sendLEDCommand={sendLEDCommand}
     />
     </SafeAreaView>
   );

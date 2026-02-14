@@ -13,12 +13,16 @@ const SETTINGS_KEYS = {
   SWITCH_STANDAR: 'switchStandar',
   BUZZER: 'buzzer',
   STATUS_BYPASS: 'statusBypass',
+  STATUS_MONITORING: 'statusMonitoring',
+  AUTO_REFRESH: 'autoRefresh',
 };
 
 // Fungsi untuk menyimpan pengaturan
 export const saveSetting = async (key: string, value: any) => {
   try {
-    await AsyncStorage.setItem(key, value.toString());
+    // Handle null or undefined values
+    const stringValue = value == null ? 'null' : value.toString();
+    await AsyncStorage.setItem(key, stringValue);
   } catch (error) {
     console.error('Error saving setting:', error);
   }
@@ -29,6 +33,10 @@ export const loadSetting = async (key: string, defaultValue: any = null) => {
   try {
     const value = await AsyncStorage.getItem(key);
     if (value !== null) {
+      // Handle the 'null' string that represents null value
+      if (value === 'null') {
+        return null;
+      }
       // Konversi string ke tipe data yang sesuai
       if (value === 'true' || value === 'false') {
         return value === 'true';
@@ -60,12 +68,14 @@ export const loadAllSettings = async () => {
       switchStandar: await loadSetting(SETTINGS_KEYS.SWITCH_STANDAR, true),
       buzzer: await loadSetting(SETTINGS_KEYS.BUZZER, false),
       statusBypass: await loadSetting(SETTINGS_KEYS.STATUS_BYPASS, false),
+      statusMonitoring: await loadSetting(SETTINGS_KEYS.STATUS_MONITORING, true),
+      autoRefresh: await loadSetting(SETTINGS_KEYS.AUTO_REFRESH, true),
     };
 
     return settings;
   } catch (error) {
     console.error('Error in loadAllSettings:', error);
-    
+
     // Return default settings in case of error
     return {
       theme: 'light',
@@ -79,6 +89,8 @@ export const loadAllSettings = async () => {
       switchStandar: true,
       buzzer: false,
       statusBypass: false,
+      statusMonitoring: true,
+      autoRefresh: true,
     };
   }
 };
@@ -98,6 +110,8 @@ export const saveAllSettings = async (settings: any) => {
       saveSetting(SETTINGS_KEYS.SWITCH_STANDAR, settings.switchStandar),
       saveSetting(SETTINGS_KEYS.BUZZER, settings.buzzer),
       saveSetting(SETTINGS_KEYS.STATUS_BYPASS, settings.statusBypass),
+      saveSetting(SETTINGS_KEYS.STATUS_MONITORING, settings.statusMonitoring),
+      saveSetting(SETTINGS_KEYS.AUTO_REFRESH, settings.autoRefresh),
     ]);
   } catch (error) {
     console.error('Error saving all settings:', error);
