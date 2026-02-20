@@ -3,6 +3,7 @@ import { BleManager, Device, BleError, State } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ErrorHandler, ErrorType, withErrorHandler } from '@/utils/errorHandler';
+import { loadAllSettings, saveAllSettings } from '@/utils/settingsManager';
 
 // Define constants for ESP32 services and characteristics
 const ESP32_DEVICE_NAME = 'ESP32_KEYLESS';
@@ -55,15 +56,47 @@ export const useBLE = () => {
   useEffect(() => {
     const loadInitialSettings = async () => {
       try {
-        const autoConnectEnabled = await AsyncStorage.getItem('autoConnectEnabled');
-        if (autoConnectEnabled !== null) {
+        // First, try to load from the unified settings system
+        const allSettings = await loadAllSettings();
+        let autoConnectValue = allSettings.autoConnectEnabled;
+        
+        // If not found in unified settings, try legacy storage
+        if (autoConnectValue === undefined) {
+          const autoConnectEnabled = await AsyncStorage.getItem('autoConnectEnabled');
+          if (autoConnectEnabled !== null) {
+            autoConnectValue = autoConnectEnabled === 'true';
+          }
+        }
+        
+        // If we have a value, update state and ensure it's saved to unified settings
+        if (autoConnectValue !== undefined) {
           setState(prev => ({
             ...prev,
-            autoConnectEnabled: autoConnectEnabled === 'true'
+            autoConnectEnabled: autoConnectValue
           }));
+          
+          // Ensure the value is also saved to unified settings system for consistency
+          try {
+            await saveAllSettings({...allSettings, autoConnectEnabled: autoConnectValue});
+          } catch (saveError) {
+            console.error('Failed to save auto-connect setting to unified system:', saveError);
+          }
         }
       } catch (error) {
         console.error('Failed to load initial settings:', error);
+        
+        // Fallback to legacy storage if unified settings fail
+        try {
+          const autoConnectEnabled = await AsyncStorage.getItem('autoConnectEnabled');
+          if (autoConnectEnabled !== null) {
+            setState(prev => ({
+              ...prev,
+              autoConnectEnabled: autoConnectEnabled === 'true'
+            }));
+          }
+        } catch (fallbackError) {
+          console.error('Fallback to legacy settings also failed:', fallbackError);
+        }
       }
     };
 
@@ -85,6 +118,42 @@ export const useBLE = () => {
             setState(prev => ({ ...prev, manager: bleManagerRef.current }));
 
             console.log('BLE Manager initialized successfully');
+            
+            // Check for any existing connections after initialization
+            setTimeout(async () => {
+              if (bleManagerRef.current) {
+                try {
+                  // Get all connected devices
+                  const connectedDevices = await bleManagerRef.current.connectedDevices([SERVICE_UUID]);
+                  
+                  if (connectedDevices.length > 0) {
+                    // If there are connected devices, update our state to reflect this
+                    const device = connectedDevices[0]; // Take the first connected device
+                    
+                    // Update state to reflect that we're connected
+                    setState(prev => ({
+                      ...prev,
+                      connectedDeviceId: device.id,
+                      connectionStatus: 'connected',
+                      ledStatus: { ...prev.ledStatus, btConnected: true },
+                      scannedDevices: prev.scannedDevices.some(d => d.id === device.id)
+                        ? prev.scannedDevices.map(d =>
+                            d.id === device.id ? device : d
+                          ) // Update existing device with fresh data
+                        : [...prev.scannedDevices, device] // Add device to array
+                    }));
+                    
+                    addLog(`Reconnected to device: ${device.name || device.id} (found on startup)`);
+                    
+                    // Subscribe to status notifications for this device
+                    subscribeToStatusNotifications(device);
+                  }
+                } catch (error) {
+                  console.log('Error checking for existing connections:', error);
+                  addLog(`Error checking for existing connections: ${(error as Error).message}`);
+                }
+              }
+            }, 1000); // Delay slightly to ensure manager is fully initialized
           }
         } catch (error) {
           console.error('Failed to initialize BleManager:', error);
@@ -118,7 +187,7 @@ export const useBLE = () => {
         }
       };
     }
-  }, [addLog]);
+  }, [addLog, subscribeToStatusNotifications]);
 
   const [state, setState] = useState<Omit<BLEState, 'connectedDevice'> & { connectedDeviceId: string | null }>({
     isScanning: false,
@@ -1449,17 +1518,32 @@ export const useBLE = () => {
 
   // Function to enable/disable auto-connect
   const toggleAutoConnect = useCallback(async () => {
-    setState(prev => {
-      const newAutoConnectStatus = !prev.autoConnectEnabled;
-      addLog(`Auto-connect ${newAutoConnectStatus ? 'enabled' : 'disabled'}`);
-      
-      // Save the new auto-connect status to AsyncStorage
-      AsyncStorage.setItem('autoConnectEnabled', newAutoConnectStatus.toString())
-        .catch(error => console.error('Failed to save auto-connect setting:', error));
-      
-      return { ...prev, autoConnectEnabled: newAutoConnectStatus };
-    });
-  }, [addLog]);
+    // Get current state to determine new value
+    const newAutoConnectStatus = !state.autoConnectEnabled;
+    addLog(`Auto-connect ${newAutoConnectStatus ? 'enabled' : 'disabled'}`);
+
+    // Update the state
+    setState(prev => ({
+      ...prev,
+      autoConnectEnabled: newAutoConnectStatus
+    }));
+
+    // Save the new auto-connect status to legacy storage
+    try {
+      await AsyncStorage.setItem('autoConnectEnabled', newAutoConnectStatus.toString());
+    } catch (error) {
+      console.error('Failed to save auto-connect setting:', error);
+    }
+
+    // Also save to unified settings system
+    try {
+      // Get all current settings and update autoConnectEnabled
+      const allSettings = await loadAllSettings();
+      await saveAllSettings({...allSettings, autoConnectEnabled: newAutoConnectStatus});
+    } catch (error) {
+      console.error('Failed to save auto-connect setting to unified system:', error);
+    }
+  }, [state.autoConnectEnabled, addLog, saveAllSettings, loadAllSettings]);
 
   // Function to attempt auto-connect when saved device is detected
   const attemptAutoConnect = useCallback((device: Device) => {

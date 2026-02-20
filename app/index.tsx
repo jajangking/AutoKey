@@ -1336,5 +1336,46 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       justifyContent: 'center',
       gap: 8,
     },
+    statusGrid: {
+      flexDirection: 'column',
+      gap: 12,
+    },
+    statusItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 8,
+    },
+    statusLabel: {
+      fontSize: 16,
+      color: isDark ? '#e2e8f0' : '#1e293b',
+      flex: 1,
+    },
+    statusIndicator: {
+      width: 60,
+      padding: 6,
+      borderRadius: 8,
+      alignItems: 'center',
+    },
+    statusActive: {
+      backgroundColor: '#dcfce7', // Light green background
+      borderWidth: 1,
+      borderColor: '#4ade80', // Green border
+    },
+    statusInactive: {
+      backgroundColor: '#fee2e2', // Light red background
+      borderWidth: 1,
+      borderColor: '#f87171', // Red border
+    },
+    statusUnknown: {
+      backgroundColor: '#fef3c7', // Light amber background
+      borderWidth: 1,
+      borderColor: '#fbbf24', // Amber border
+    },
+    statusText: {
+      fontSize: 14,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
   });
 };

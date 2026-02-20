@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Appearance } from 'react-native';
-import { loadSetting, saveSetting, SETTINGS_KEYS } from '@/utils/settingsManager';
+import { loadSetting, saveSetting, SETTINGS_KEYS, loadAllSettings, saveAllSettings } from '@/utils/settingsManager';
 
 type ThemeType = 'light' | 'dark' | 'oled';
 
@@ -27,12 +27,28 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     const loadSavedTheme = async () => {
       try {
-        // Load saved theme from AsyncStorage
-        const savedTheme = await loadSetting(SETTINGS_KEYS.THEME, null);
-        
-        if (savedTheme) {
-          // If we have a saved theme, use it
-          setTheme(savedTheme as ThemeType);
+        // First, try to load from the unified settings system
+        const allSettings = await loadAllSettings();
+        let themeValue = allSettings.theme;
+
+        // If not found in unified settings, try legacy storage
+        if (!themeValue) {
+          const savedTheme = await loadSetting(SETTINGS_KEYS.THEME, null);
+          if (savedTheme) {
+            themeValue = savedTheme as ThemeType;
+          }
+        }
+
+        if (themeValue) {
+          // If we have a theme value, use it
+          setTheme(themeValue as ThemeType);
+          
+          // Ensure the value is also saved to unified settings system for consistency
+          try {
+            await saveAllSettings({...allSettings, theme: themeValue});
+          } catch (saveError) {
+            console.error('Failed to save theme to unified system:', saveError);
+          }
         } else {
           // Otherwise, use system theme preference
           const systemTheme = Appearance.getColorScheme() as ThemeType;
@@ -50,16 +66,25 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const toggleTheme = async () => {
-    const newTheme = theme === 'dark' ? 'oled' : 
+    const newTheme = theme === 'dark' ? 'oled' :
                      theme === 'oled' ? 'light' : 'dark';
-    
+
     setTheme(newTheme);
-    
+
     // Save the new theme to AsyncStorage
     try {
       await saveSetting(SETTINGS_KEYS.THEME, newTheme);
     } catch (error) {
       console.error('Error saving theme:', error);
+    }
+
+    // Also save to unified settings system
+    try {
+      // Get all current settings and update theme
+      const allSettings = await loadAllSettings();
+      await saveAllSettings({...allSettings, theme: newTheme});
+    } catch (error) {
+      console.error('Error saving theme to unified system:', error);
     }
   };
 

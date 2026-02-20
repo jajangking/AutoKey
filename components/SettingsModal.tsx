@@ -73,7 +73,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
     }
   };
 
-  const saveSettings = async (updatedSettings) => {
+  const saveSettings = async (updatedSettings: typeof settings) => {
     try {
       await saveAllSettings(updatedSettings);
     } catch (error) {
@@ -82,7 +82,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
     }
   };
 
-  const toggleSetting = async (settingName: string) => {
+  type SettingName = keyof typeof settings;
+
+  const toggleSetting = async (settingName: SettingName) => {
     const currentValue = settings[settingName];
     const newValue = !currentValue;
     
