@@ -125,28 +125,31 @@ export const useBLE = () => {
                 try {
                   // Get all connected devices
                   const connectedDevices = await bleManagerRef.current.connectedDevices([SERVICE_UUID]);
-                  
-                  if (connectedDevices.length > 0) {
+
+                  if (connectedDevices && connectedDevices.length > 0) {
                     // If there are connected devices, update our state to reflect this
                     const device = connectedDevices[0]; // Take the first connected device
-                    
-                    // Update state to reflect that we're connected
-                    setState(prev => ({
-                      ...prev,
-                      connectedDeviceId: device.id,
-                      connectionStatus: 'connected',
-                      ledStatus: { ...prev.ledStatus, btConnected: true },
-                      scannedDevices: prev.scannedDevices.some(d => d.id === device.id)
-                        ? prev.scannedDevices.map(d =>
-                            d.id === device.id ? device : d
-                          ) // Update existing device with fresh data
-                        : [...prev.scannedDevices, device] // Add device to array
-                    }));
-                    
-                    addLog(`Reconnected to device: ${device.name || device.id} (found on startup)`);
-                    
-                    // Subscribe to status notifications for this device
-                    subscribeToStatusNotifications(device);
+
+                    // Guard: Validate device before using it
+                    if (device && device.id) {
+                      // Update state to reflect that we're connected
+                      setState(prev => ({
+                        ...prev,
+                        connectedDeviceId: device.id,
+                        connectionStatus: 'connected',
+                        ledStatus: { ...prev.ledStatus, btConnected: true },
+                        scannedDevices: prev.scannedDevices.some(d => d.id === device.id)
+                          ? prev.scannedDevices.map(d =>
+                              d.id === device.id ? device : d
+                            ) // Update existing device with fresh data
+                          : [...prev.scannedDevices, device] // Add device to array
+                      }));
+
+                      addLog(`Reconnected to device: ${device.name || device.id} (found on startup)`);
+
+                      // Subscribe to status notifications for this device
+                      subscribeToStatusNotifications(device);
+                    }
                   }
                 } catch (error) {
                   console.log('Error checking for existing connections:', error);
@@ -187,7 +190,7 @@ export const useBLE = () => {
         }
       };
     }
-  }, [addLog, subscribeToStatusNotifications]);
+  }, [addLog]);
 
   const [state, setState] = useState<Omit<BLEState, 'connectedDevice'> & { connectedDeviceId: string | null }>({
     isScanning: false,
@@ -459,6 +462,12 @@ export const useBLE = () => {
 
   // Connect to a specific device
   const connectToDevice = useCallback(async (device: Device) => {
+    // Guard: Validate device parameter
+    if (!device || !device.id) {
+      addLog('Invalid device: device or device.id is null/undefined');
+      return;
+    }
+
     // Guard: Prevent connecting if already connected or connecting
     if (state.connectionStatus !== 'disconnected') {
       addLog('Already connected or connecting to a device');
@@ -606,6 +615,12 @@ export const useBLE = () => {
 
   // Subscribe to status notifications
   const subscribeToStatusNotifications = useCallback(async (device: Device) => {
+    // Guard: Validate device parameter
+    if (!device || !device.id) {
+      addLog('Invalid device for subscription: device or device.id is null/undefined');
+      return;
+    }
+
     if (!bleManagerRef.current) {
       addLog('BLE Manager not initialized for subscribing to notifications');
       return;

@@ -10,6 +10,17 @@ export default {
   scheme: "autokey",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
+  updates: {
+    url: "https://u.expo.dev/be933b6c-23bd-43b7-a8db-32096f77032f"
+  },
+  runtimeVersion: {
+    policy: "appVersion"
+  },
+  extra: {
+    eas: {
+      projectId: "be933b6c-23bd-43b7-a8db-32096f77032f"
+    }
+  },
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.jajang.AutoKey",

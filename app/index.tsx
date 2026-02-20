@@ -913,11 +913,6 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       gap: 8,
       marginBottom: 12,
     },
-    statusText: {
-      fontSize: 16,
-      color: isDark ? '#cbd5e1' : '#475569',
-      flex: 1,
-    },
     statusValue: {
       fontWeight: 'bold',
     },
