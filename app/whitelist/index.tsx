@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useWhitelist } from '../../context/WhitelistContext';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function WhitelistManagementScreen() {
   const { whitelist } = useWhitelist();
@@ -11,6 +12,12 @@ export default function WhitelistManagementScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.back()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#e2e8f0" />
+        </TouchableOpacity>
         <Text style={styles.title}>Manajemen Whitelist</Text>
       </View>
 
@@ -52,13 +59,22 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 20,
+    paddingTop: 40,
     backgroundColor: '#1e3a8a',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  backButton: {
+    padding: 4,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#e2e8f0',
+    flex: 1,
     textAlign: 'center',
+    marginRight: 24,
   },
   content: {
     flex: 1,

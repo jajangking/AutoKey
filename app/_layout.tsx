@@ -8,8 +8,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { WhitelistProvider } from '@/context/WhitelistContext';
 
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
-  anchor: '(tabs)',
+  initialRouteName: 'index',
 };
 
 export default function RootLayout() {
@@ -20,16 +19,11 @@ export default function RootLayout() {
       <WhitelistProvider>
         <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen
-              name="(tabs)"
-              options={{
-                headerShown: false,
-              }}
-            />
+            <Stack.Screen name="index" options={{ title: 'AutoKey' }} />
+            <Stack.Screen name="control" options={{ title: 'Control' }} />
+            <Stack.Screen name="history" options={{ title: 'History' }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Settings' }} />
-            <Stack.Screen name="whitelist/index" options={{ title: 'Whitelist' }} />
-            <Stack.Screen name="whitelist/ble" options={{ title: 'BLE Whitelist' }} />
-            <Stack.Screen name="whitelist/wifi" options={{ title: 'WiFi Whitelist' }} />
+            <Stack.Screen name="whitelist" options={{ title: 'Whitelist' }} />
           </Stack>
           <StatusBar style="light" backgroundColor="#0f172a" translucent={false} />
         </NavigationThemeProvider>

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, TextInput } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useWhitelist } from '../../context/WhitelistContext';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function BleWhitelistScreen() {
   const { whitelist, addToWhitelist, removeFromWhitelist } = useWhitelist();
@@ -56,8 +57,11 @@ export default function BleWhitelistScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Kembali</Text>
+        <TouchableOpacity
+          style={styles.headerBackButton}
+          onPress={() => router.back()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#e2e8f0" />
         </TouchableOpacity>
         <Text style={styles.title}>Whitelist BLE</Text>
       </View>
@@ -95,18 +99,20 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 20,
+    paddingTop: 40,
     backgroundColor: '#1e3a8a',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
   },
-  backButton: {
-    color: '#e2e8f0',
-    fontSize: 16,
-    marginBottom: 10,
+  headerBackButton: {
+    padding: 4,
   },
   title: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#e2e8f0',
-    textAlign: 'center',
+    flex: 1,
   },
   addContainer: {
     padding: 20,

@@ -14,14 +14,14 @@ import {
   Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useBLE } from '../../hooks/useBLE';
+import { useBLE } from '../hooks/useBLE';
 import { Ionicons, MaterialCommunityIcons, Entypo } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useTheme } from '@/context/ThemeContext';
 import { Device } from 'react-native-ble-plx';
 import ErrorDisplay from '@/components/ErrorDisplay';
 import BluetoothDeviceItem from '@/components/BluetoothDeviceItem';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import SettingsModal from '@/components/SettingsModal';
 
 // Function to determine signal strength color
@@ -119,51 +119,54 @@ export default function Index() {
   }, []);
 
   // Back button handler - show exit confirmation on Android
-  useEffect(() => {
-    if (Platform.OS === 'android') {
-      const backAction = () => {
-        Alert.alert(
-          'Keluar Aplikasi',
-          'Apakah Anda yakin ingin keluar dari AutoKey?',
-          [
-            {
-              text: 'Batal',
-              style: 'cancel',
-            },
-            {
-              text: 'Keluar',
-              onPress: async () => {
-                // Disconnect from device before exiting (don't wait for completion)
-                if (state.connectionStatus === 'connected') {
-                  try {
-                    // Just stop scanning and disconnect without waiting
-                    stopScan();
-                    // Quick disconnect - don't wait for promise
-                    disconnectFromDevice();
-                  } catch (err) {
-                    // Ignore errors during exit
-                  }
-                }
-                // Wait a bit for disconnect to process, then exit
-                setTimeout(() => {
-                  BackHandler.exitApp();
-                }, 100);
+  // Only active when this screen is focused (not on whitelist pages)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (Platform.OS === 'android') {
+        const backAction = () => {
+          Alert.alert(
+            'Keluar Aplikasi',
+            'Apakah Anda yakin ingin keluar dari AutoKey?',
+            [
+              {
+                text: 'Batal',
+                style: 'cancel',
               },
-            },
-          ],
-          { cancelable: true }
+              {
+                text: 'Keluar',
+                onPress: async () => {
+                  // Disconnect from device before exiting (don't wait for completion)
+                  if (state.connectionStatus === 'connected') {
+                    try {
+                      // Just stop scanning and disconnect without waiting
+                      stopScan();
+                      // Quick disconnect - don't wait for promise
+                      disconnectFromDevice();
+                    } catch (err) {
+                      // Ignore errors during exit
+                    }
+                  }
+                  // Wait a bit for disconnect to process, then exit
+                  setTimeout(() => {
+                    BackHandler.exitApp();
+                  }, 100);
+                },
+              },
+            ],
+            { cancelable: true }
+          );
+          return true; // Prevent default back behavior
+        };
+
+        const backHandler = BackHandler.addEventListener(
+          'hardwareBackPress',
+          backAction
         );
-        return true; // Prevent default back behavior
-      };
 
-      const backHandler = BackHandler.addEventListener(
-        'hardwareBackPress',
-        backAction
-      );
-
-      return () => backHandler.remove();
-    }
-  }, [state.connectionStatus]);
+        return () => backHandler.remove();
+      }
+    }, [state.connectionStatus])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -858,6 +861,15 @@ export default function Index() {
           <Ionicons name="settings-outline" size={20} color="#ffffff" />
           <Text style={styles.buttonText}> Settings</Text>
         </TouchableOpacity>
+
+        {/* Whitelist Button */}
+        <TouchableOpacity
+          style={styles.whitelistButton}
+          onPress={() => router.push('/whitelist')}
+        >
+          <Ionicons name="list-outline" size={20} color="#ffffff" />
+          <Text style={styles.buttonText}> Whitelist</Text>
+        </TouchableOpacity>
       </ScrollView>
     </Animated.View>
     <ErrorDisplay
@@ -1367,6 +1379,18 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       justifyContent: 'center',
       gap: 8,
       marginTop: 16,
+      marginHorizontal: 16,
+    },
+    whitelistButton: {
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: '#10b981', // Emerald green
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+      marginTop: 12,
       marginHorizontal: 16,
     },
     resetButton: {
