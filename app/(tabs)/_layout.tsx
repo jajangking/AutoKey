@@ -17,8 +17,9 @@ export default function TabLayout() {
         tabBarActiveTintColor: theme === 'oled' ? Colors.oled.tint :
                              theme === 'dark' ? Colors.dark.tint :
                              Colors.light.tint,
-        headerShown: false,
         tabBarButton: HapticTab,
+        tabBarStyle: { display: 'none' },
+        headerShown: false,
       }}>
       <Tabs.Screen
         name="index"
@@ -32,13 +33,6 @@ export default function TabLayout() {
         options={{
           title: 'Control',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="gamecontroller" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
         }}
       />
     </Tabs>

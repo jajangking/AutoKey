@@ -1,0 +1,32 @@
+diff --git a/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/BlePlxModule.java b/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/BlePlxModule.java
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/BlePlxModule.java
++++ b/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/BlePlxModule.java
+@@ -62,7 +62,11 @@ public class BlePlxModule extends ReactContextBaseJavaModule {
+             disposable = Observable.error(throwable)
+                     .doFinally(() -> {
+                         if (throwable instanceof BleException) {
+-                            promise.reject(((BleException) throwable).getCode(), throwable.getMessage(), throwable);
++                            BleException bleException = (BleException) throwable;
++                            String errorCode = bleException.getCode() != null ? bleException.getCode() : "BLE_ERROR";
++                            String errorMessage = bleException.getMessage() != null ? bleException.getMessage() : "Unknown BLE error";
++                            promise.reject(errorCode, errorMessage, throwable);
+                         } else {
+                             promise.reject("UNKNOWN_ERROR", throwable.getMessage(), throwable);
+                         }
+diff --git a/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/utils/SafePromise.java b/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/utils/SafePromise.java
+index 2345678..bcdefgh 100644
+--- a/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/utils/SafePromise.java
++++ b/node_modules/react-native-ble-plx/android/src/main/java/com/bleplx/utils/SafePromise.java
+@@ -22,7 +22,10 @@ public class SafePromise {
+     }
+ 
+     public void reject(String code, String message, Throwable throwable) {
+-        promise.reject(code, message, throwable);
++        // Ensure code is never null to prevent NullPointerException
++        String safeCode = code != null ? code : "BLE_ERROR";
++        String safeMessage = message != null ? message : "Unknown error";
++        promise.reject(safeCode, safeMessage, throwable);
+     }
+ 
+     public void resolve(Object value) {

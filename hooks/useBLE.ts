@@ -169,25 +169,26 @@ export const useBLE = () => {
         if (timer) {
           clearTimeout(timer);
         }
-        if (bleManagerRef.current) {
-          try {
-            bleManagerRef.current.destroy();
-          } catch (error) {
-            // Handle the specific error that causes the crash
-            let destroyErrorMessage = '';
-            if (error instanceof Error) {
-              destroyErrorMessage = error.message || 'Unknown error';
-              if (destroyErrorMessage.includes('Parameter specified as non-null is null')) {
-                destroyErrorMessage = 'Error destroying BleManager: A known error occurred. This is probably a bug!';
-              }
-            } else {
-              destroyErrorMessage = 'Error destroying BleManager: A known error occurred. This is probably a bug!';
-            }
-            console.error('Error destroying BleManager:', error);
-            addLog(`Error destroying BleManager: ${destroyErrorMessage}`);
-          }
-          bleManagerRef.current = null;
-        }
+        // Don't destroy BLE manager - causes native crash on Android
+        // if (bleManagerRef.current) {
+        //   try {
+        //     bleManagerRef.current.destroy();
+        //   } catch (error) {
+        //     // Handle the specific error that causes the crash
+        //     let destroyErrorMessage = '';
+        //     if (error instanceof Error) {
+        //       destroyErrorMessage = error.message || 'Unknown error';
+        //       if (destroyErrorMessage.includes('Parameter specified as non-null is null')) {
+        //         destroyErrorMessage = 'Error destroying BleManager: A known error occurred. This is probably a bug!';
+        //       }
+        //     } else {
+        //       destroyErrorMessage = 'Error destroying BleManager: A known error occurred. This is probably a bug!';
+        //     }
+        //     console.error('Error destroying BleManager:', error);
+        //     addLog(`Error destroying BleManager: ${destroyErrorMessage}`);
+        //   }
+        //   bleManagerRef.current = null;
+        // }
       };
     }
   }, [addLog]);
@@ -462,156 +463,183 @@ export const useBLE = () => {
 
   // Connect to a specific device
   const connectToDevice = useCallback(async (device: Device) => {
-    // Guard: Validate device parameter
-    if (!device || !device.id) {
-      addLog('Invalid device: device or device.id is null/undefined');
-      return;
-    }
-
-    // Guard: Prevent connecting if already connected or connecting
-    if (state.connectionStatus !== 'disconnected') {
-      addLog('Already connected or connecting to a device');
-
-      // If we're trying to connect to a different device, cancel the current connection first
-      if (state.connectedDeviceId && state.connectedDeviceId !== device.id) {
-        try {
-          if (bleManagerRef.current) {
-            await bleManagerRef.current.cancelDeviceConnection(state.connectedDeviceId);
-          }
-        } catch (cancelError) {
-          addLog(`Error canceling previous connection: ${(cancelError as Error).message}`);
-        }
-      }
-      return;
-    }
-
-    if (!managerInitialized || !bleManagerRef.current) {
-      addLog('BLE Manager not initialized');
-      setState(prev => ({ ...prev, connectionStatus: 'disconnected' }));
-      return;
-    }
-
-    // Stop scanning if it's in progress
-    if (state.isScanning) {
-      try {
-        bleManagerRef.current.stopDeviceScan();
-      } catch (scanStopError) {
-        addLog(`Error stopping scan: ${(scanStopError as Error).message}`);
-      }
-      setState(prev => ({ ...prev, isScanning: false }));
-    }
-
-    setState(prev => ({ ...prev, connectionStatus: 'connecting' }));
-    addLog(`Connecting to ${device.name || device.id}...`);
-
+    // Wrap entire function in try-catch to prevent crashes from native BLE errors
     try {
-      // Guard: Check if device is already connected before attempting connection
-      try {
-        const isAlreadyConnected = await bleManagerRef.current.isDeviceConnected(device.id);
-        if (isAlreadyConnected) {
-          addLog(`Device ${device.id} is already connected`);
-          // Cancel the connection attempt if it's somehow already connected
-          await bleManagerRef.current.cancelDeviceConnection(device.id);
-        }
-      } catch (checkError) {
-        // Ignore errors during connection check, just proceed with connection
-        addLog(`Connection check failed (this is OK): ${(checkError as Error).message}`);
+      // Guard: Validate device parameter
+      if (!device || !device.id) {
+        addLog('Invalid device: device or device.id is null/undefined');
+        return;
       }
 
-      // Connect to the device using the bleManager
-      // Using shorter timeout to prevent hanging
-      const connectedDevice = await bleManagerRef.current.connectToDevice(device.id, { timeout: 8000 });
+      // Guard: Prevent connecting if already connected or connecting
+      if (state.connectionStatus !== 'disconnected') {
+        addLog('Already connected or connecting to a device');
 
-      // Verify the device is actually connected before proceeding
-      const isConnected = await connectedDevice.isConnected();
-      if (!isConnected) {
-        throw new Error('Device is not connected after connection attempt');
-      }
-
-      // Discover services and characteristics
-      try {
-        await connectedDevice.discoverAllServicesAndCharacteristics();
-
-        // Store the actual device instance in the ref (not in state)
-        connectedDeviceRef.current = connectedDevice;
-
-        // Update state with only the device ID (not the full device object)
-        // Also ensure the connected device is in the scannedDevices array
-        setState(prev => ({
-          ...prev,
-          connectedDeviceId: connectedDevice.id,
-          connectionStatus: 'connected',
-          ledStatus: { ...prev.ledStatus, btConnected: true },
-          scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
-            ? prev.scannedDevices.map(d =>
-                d.id === connectedDevice.id ? connectedDevice : d
-              ) // Update existing device with fresh data
-            : [...prev.scannedDevices, connectedDevice] // Add device to array
-        }));
-
-        addLog(`Connected to ${connectedDevice.name || connectedDevice.id}`);
-
-        // Subscribe to status notifications
-        subscribeToStatusNotifications(connectedDevice);
-      } catch (discoverErr) {
-        addLog(`Failed to discover services: ${(discoverErr as Error).message}`);
-
-        // Still consider it connected if the connection succeeded, even if service discovery failed
-        // Store the actual device instance in the ref (not in state)
-        connectedDeviceRef.current = connectedDevice;
-
-        // Update state with only the device ID (not the full device object)
-        // Also ensure the connected device is in the scannedDevices array
-        setState(prev => ({
-          ...prev,
-          connectedDeviceId: connectedDevice.id,
-          connectionStatus: 'connected',
-          ledStatus: { ...prev.ledStatus, btConnected: true },
-          scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
-            ? prev.scannedDevices.map(d =>
-                d.id === connectedDevice.id ? connectedDevice : d
-              ) // Update existing device with fresh data
-            : [...prev.scannedDevices, connectedDevice] // Add device to array
-        }));
-
-        addLog(`Connected to ${connectedDevice.name || connectedDevice.id} (with limited functionality)`);
-      }
-    } catch (err) {
-      // Handle the specific error that causes the crash
-      let errorMessage = '';
-      if (err instanceof Error) {
-        errorMessage = err.message || 'Unknown error';
-        if (errorMessage.includes('Parameter specified as non-null is null')) {
-          errorMessage = 'Connection failed: A known error occurred. This is probably a bug!';
-        } else {
-          errorMessage = `Connection failed: ${errorMessage}`;
-        }
-      } else {
-        errorMessage = 'Connection failed: A known error occurred. This is probably a bug!';
-      }
-
-      addLog(errorMessage);
-      ErrorHandler.handleError(ErrorType.CONNECTION_TIMEOUT, errorMessage, err);
-
-      setState(prev => ({
-        ...prev,
-        connectionStatus: 'disconnected',
-        connectedDeviceId: null, // Ensure connectedDeviceId is null on failure
-        ledStatus: { ...prev.ledStatus, btConnected: false }
-      }));
-
-      // If auto-connect is enabled, restart scanning to try again when device becomes available
-      if (state.autoConnectEnabled) {
-        addLog('Auto-connect enabled: restarting scan after connection failure');
-        const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
-          // Only start scanning if not already connected and not currently scanning
-          if (state.connectionStatus === 'disconnected' && !state.isScanning) {
-            startScan();
+        // If we're trying to connect to a different device, cancel the current connection first
+        if (state.connectedDeviceId && state.connectedDeviceId !== device.id) {
+          try {
+            if (bleManagerRef.current) {
+              await bleManagerRef.current.cancelDeviceConnection(state.connectedDeviceId);
+            }
+          } catch (cancelError) {
+            addLog(`Error canceling previous connection: ${(cancelError as Error).message}`);
           }
-        }, 3000); // Wait 3 seconds before retrying
+        }
+        return;
       }
+
+      if (!managerInitialized || !bleManagerRef.current) {
+        addLog('BLE Manager not initialized');
+        setState(prev => ({ ...prev, connectionStatus: 'disconnected' }));
+        return;
+      }
+
+      // Stop scanning if it's in progress
+      if (state.isScanning) {
+        try {
+          bleManagerRef.current.stopDeviceScan();
+        } catch (scanStopError) {
+          addLog(`Error stopping scan: ${(scanStopError as Error).message}`);
+        }
+        setState(prev => ({ ...prev, isScanning: false }));
+      }
+
+      setState(prev => ({ ...prev, connectionStatus: 'connecting' }));
+      addLog(`Connecting to ${device.name || device.id}...`);
+
+      try {
+        // Guard: Check if device is already connected before attempting connection
+        try {
+          const isAlreadyConnected = await bleManagerRef.current.isDeviceConnected(device.id);
+          if (isAlreadyConnected) {
+            addLog(`Device ${device.id} is already connected`);
+            // Cancel the connection attempt if it's somehow already connected
+            await bleManagerRef.current.cancelDeviceConnection(device.id);
+          }
+        } catch (checkError) {
+          // Ignore errors during connection check, just proceed with connection
+          addLog(`Connection check failed (this is OK): ${(checkError as Error).message}`);
+        }
+
+        // Connect to the device using the bleManager
+        // Using shorter timeout to prevent hanging
+        let connectedDevice;
+        try {
+          connectedDevice = await bleManagerRef.current.connectToDevice(device.id, { timeout: 8000 });
+        } catch (connectErr) {
+          // Catch native BLE errors that might crash the app
+          const connectErrorMsg = connectErr instanceof Error ? connectErr.message : 'Unknown error';
+          if (connectErrorMsg.includes('Parameter specified as non-null is null')) {
+            // This is the known bug in react-native-ble-plx
+            throw new Error('Connection timeout - device not responding');
+          }
+          throw connectErr;
+        }
+
+        // Verify the device is actually connected before proceeding
+        const isConnected = await connectedDevice.isConnected();
+        if (!isConnected) {
+          throw new Error('Device is not connected after connection attempt');
+        }
+
+        // Discover services and characteristics
+        try {
+          await connectedDevice.discoverAllServicesAndCharacteristics();
+
+          // Store the actual device instance in the ref (not in state)
+          connectedDeviceRef.current = connectedDevice;
+
+          // Update state with only the device ID (not the full device object)
+          // Also ensure the connected device is in the scannedDevices array
+          setState(prev => ({
+            ...prev,
+            connectedDeviceId: connectedDevice.id,
+            connectionStatus: 'connected',
+            ledStatus: { ...prev.ledStatus, btConnected: true },
+            scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
+              ? prev.scannedDevices.map(d =>
+                  d.id === connectedDevice.id ? connectedDevice : d
+                ) // Update existing device with fresh data
+              : [...prev.scannedDevices, connectedDevice] // Add device to array
+          }));
+
+          addLog(`Connected to ${connectedDevice.name || connectedDevice.id}`);
+
+          // Subscribe to status notifications
+          subscribeToStatusNotifications(connectedDevice);
+        } catch (discoverErr) {
+          addLog(`Failed to discover services: ${(discoverErr as Error).message}`);
+
+          // Still consider it connected if the connection succeeded, even if service discovery failed
+          // Store the actual device instance in the ref (not in state)
+          connectedDeviceRef.current = connectedDevice;
+
+          // Update state with only the device ID (not the full device object)
+          // Also ensure the connected device is in the scannedDevices array
+          setState(prev => ({
+            ...prev,
+            connectedDeviceId: connectedDevice.id,
+            connectionStatus: 'connected',
+            ledStatus: { ...prev.ledStatus, btConnected: true },
+            scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
+              ? prev.scannedDevices.map(d =>
+                  d.id === connectedDevice.id ? connectedDevice : d
+                ) // Update existing device with fresh data
+              : [...prev.scannedDevices, connectedDevice] // Add device to array
+          }));
+
+          addLog(`Connected to ${connectedDevice.name || connectedDevice.id} (with limited functionality)`);
+        }
+      } catch (err) {
+        // Handle the specific error that causes the crash
+        let errorMessage = '';
+        if (err instanceof Error) {
+          errorMessage = err.message || 'Unknown error';
+          if (errorMessage.includes('Parameter specified as non-null is null')) {
+            errorMessage = 'Connection failed: A known error occurred. This is probably a bug!';
+          } else if (errorMessage.includes('connection_timeout') || errorMessage.includes('Connection failed')) {
+            errorMessage = 'Connection timeout - device not responding';
+          } else {
+            errorMessage = `Connection failed: ${errorMessage}`;
+          }
+        } else {
+          errorMessage = 'Connection failed: A known error occurred. This is probably a bug!';
+        }
+
+        addLog(errorMessage);
+
+        // Don't throw error for connection timeout - just log it
+        if (errorMessage.includes('timeout') || errorMessage.includes('not responding')) {
+          addLog('Tip: Make sure ESP32 is powered on and in range');
+        } else {
+          ErrorHandler.handleError(ErrorType.CONNECTION_TIMEOUT, errorMessage, err);
+        }
+
+        setState(prev => ({
+          ...prev,
+          connectionStatus: 'disconnected',
+          connectedDeviceId: null, // Ensure connectedDeviceId is null on failure
+          ledStatus: { ...prev.ledStatus, btConnected: false }
+        }));
+
+        // If auto-connect is enabled, restart scanning to try again when device becomes available
+        if (state.autoConnectEnabled) {
+          addLog('Auto-connect enabled: restarting scan after connection failure');
+          const timeoutId: number | NodeJS.Timeout = setTimeout(() => {
+            // Only start scanning if not already connected and not currently scanning
+            if (state.connectionStatus === 'disconnected' && !state.isScanning) {
+              startScan();
+            }
+          }, 3000); // Wait 3 seconds before retrying
+        }
+      }
+    } catch (globalErr) {
+      // Global error handler for any uncaught errors in connectToDevice
+      const globalErrorMsg = globalErr instanceof Error ? globalErr.message : 'Unknown error';
+      addLog(`Unexpected error: ${globalErrorMsg}`);
+      addLog('Tip: Try restarting the app or check ESP32 power');
     }
-  }, [state.connectionStatus, state.isScanning, addLog, managerInitialized]);
+  }, [state.connectionStatus, state.isScanning, addLog, managerInitialized, state.autoConnectEnabled]);
 
   // Subscribe to status notifications
   const subscribeToStatusNotifications = useCallback(async (device: Device) => {
@@ -1608,15 +1636,16 @@ const resetScannedDevices = useCallback(() => {
         }
       }
 
-      // Destroy the BLE manager to free resources
-      if (bleManagerRef.current) {
-        try {
-          bleManagerRef.current.destroy();
-        } catch (error) {
-          console.log('Error destroying BLE manager during cleanup:', (error as Error).message);
-        }
-        bleManagerRef.current = null;
-      }
+      // Don't destroy BLE manager on unmount - it causes native crash on Android
+      // The OS will clean up BLE resources automatically when app exits
+      // if (bleManagerRef.current) {
+      //   try {
+      //     bleManagerRef.current.destroy();
+      //   } catch (error) {
+      //     console.log('Error destroying BLE manager during cleanup:', (error as Error).message);
+      //   }
+      //   bleManagerRef.current = null;
+      // }
     };
   }, []);
 
