@@ -152,7 +152,7 @@ export default function Index() {
     }
   };
 
-  // Add token manually
+  // Add token manually (for owner adding other devices)
   const handleAddToken = async () => {
     if (state.connectionStatus !== 'connected') {
       Alert.alert('Tidak Terhubung', 'Hubungkan ke ESP32 terlebih dahulu.', [{ text: 'OK' }]);
@@ -171,37 +171,29 @@ export default function Index() {
       setWhitelistLoading(true);
       addLog(`Adding token to whitelist: ${token.substring(0, 8)}...`);
       
-      // Use readESP32Whitelist which will trigger ESP32 to send entries
-      // For adding, we need to send command directly
-      const addTokenCommand = async () => {
-        const tokenBytes = [0xFE];
-        for (let i = 0; i < token.length; i++) {
-          tokenBytes.push(token.charCodeAt(i));
-        }
-        
-        const tokenBuffer = new Uint8Array(tokenBytes);
-        const tokenData = btoa(String.fromCharCode(...tokenBuffer));
-        
-        // Get connected device from state
-        const device = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
-        if (!device) {
-          throw new Error('No connected device found');
-        }
-        
-        await device.writeCharacteristicWithResponseForService(
-          SERVICE_UUID,
-          CONTROL_CHARACTERISTIC_UUID,
-          tokenData
-        );
-      };
+      const tokenBytes = [0xFE];
+      for (let i = 0; i < token.length; i++) {
+        tokenBytes.push(token.charCodeAt(i));
+      }
       
-      await addTokenCommand();
+      const tokenBuffer = new Uint8Array(tokenBytes);
+      const tokenData = btoa(String.fromCharCode(...tokenBuffer));
+      
+      const device = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+      if (!device) {
+        throw new Error('No connected device found');
+      }
+      
+      await device.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        CONTROL_CHARACTERISTIC_UUID,
+        tokenData
+      );
       
       addLog(`Added token to whitelist: ${token.substring(0, 8)}...`);
       setManualTokenInput('');
       Alert.alert('Success!', 'Token added to whitelist', [{ text: 'OK' }]);
       
-      // Refresh whitelist after short delay
       setTimeout(async () => {
         await readESP32Whitelist();
       }, 500);
@@ -210,6 +202,74 @@ export default function Index() {
     } finally {
       setWhitelistLoading(false);
     }
+  };
+
+  // Save token for this device (before connect)
+  const handleSaveDeviceToken = async () => {
+    const token = deviceTokenToSave.trim().toUpperCase();
+    
+    if (!/^[0-9A-F]{32}$/.test(token)) {
+      Alert.alert('Invalid Token', 'Token must be 32 hexadecimal characters', [{ text: 'OK' }]);
+      return;
+    }
+
+    try {
+      await AsyncStorage.setItem('device_auth_token', token);
+      addLog(`Saved device token: ${token.substring(0, 8)}...`);
+      setDeviceTokenToSave('');
+      setShowTokenEntryModal(false);
+      Alert.alert(
+        'Token Saved!', 
+        'Token saved. Now you can connect to ESP32.', 
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save token', [{ text: 'OK' }]);
+    }
+  };
+
+  // Enable pairing mode on ESP32
+  const handleEnablePairingMode = async () => {
+    if (state.connectionStatus !== 'connected') {
+      Alert.alert('Tidak Terhubung', 'Hubungkan ke ESP32 terlebih dahulu.', [{ text: 'OK' }]);
+      return;
+    }
+
+    Alert.alert(
+      'Enable Pairing Mode?',
+      'ESP32 will accept ANY device for 60 seconds. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Enable',
+          onPress: async () => {
+            try {
+              const device = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+              if (!device) return;
+
+              // Send 0xF1 command
+              const pairingBuffer = new Uint8Array([0xF1]);
+              const pairingData = btoa(String.fromCharCode(...pairingBuffer));
+              
+              await device.writeCharacteristicWithResponseForService(
+                SERVICE_UUID,
+                CONTROL_CHARACTERISTIC_UUID,
+                pairingData
+              );
+              
+              addLog('Pairing mode enabled (60 seconds)');
+              Alert.alert(
+                'Pairing Mode Active!',
+                'ESP32 will accept any device for 60 seconds.\nOther devices can now connect!',
+                [{ text: 'OK' }]
+              );
+            } catch (error) {
+              Alert.alert('Error', `Failed to enable pairing: ${(error as Error).message}`, [{ text: 'OK' }]);
+            }
+          }
+        }
+      ]
+    );
   };
 
   // State for auth status
@@ -223,6 +283,10 @@ export default function Index() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [generatedToken, setGeneratedToken] = useState<string>('');
   const [manualTokenInput, setManualTokenInput] = useState<string>('');
+  
+  // State for manual token entry (before connect)
+  const [showTokenEntryModal, setShowTokenEntryModal] = useState(false);
+  const [deviceTokenToSave, setDeviceTokenToSave] = useState<string>('');
 
   // Handle auth status changes when connected
   useEffect(() => {
@@ -363,6 +427,14 @@ export default function Index() {
             />
             <Text style={styles.title}>AutoKey</Text>
             <Text style={styles.subtitle}>Keyless Motor System</Text>
+            
+            {/* Token Entry Button (for new devices) */}
+            <TouchableOpacity
+              style={styles.tokenEntryButton}
+              onPress={() => setShowTokenEntryModal(true)}
+            >
+              <Ionicons name="key-outline" size={20} color="#3b82f6" />
+            </TouchableOpacity>
           </View>
 
           {/* System Status Card */}
@@ -1247,6 +1319,70 @@ export default function Index() {
                 </Text>
               </TouchableOpacity>
             </View>
+
+            <View style={styles.pairingModeSection}>
+              <Text style={styles.pairingModeTitle}>Pairing Mode</Text>
+              <Text style={styles.pairingModeDesc}>
+                Enable pairing mode to allow any device to connect for 60 seconds
+              </Text>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalWarning]}
+                onPress={handleEnablePairingMode}
+              >
+                <Ionicons name="wifi" size={20} color="#fff" />
+                <Text style={styles.modalButtonText}>Enable Pairing Mode</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Token Entry Modal (for new devices before connect) */}
+      <Modal
+        visible={showTokenEntryModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowTokenEntryModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Enter Your Token</Text>
+              <TouchableOpacity onPress={() => setShowTokenEntryModal(false)}>
+                <Ionicons name="close" size={28} color="#e2e8f0" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              If you received a token from the owner, enter it here to authorize this device.
+            </Text>
+
+            <TextInput
+              style={[styles.tokenInput, styles.tokenInputLarge]}
+              placeholder="Enter 32-char hex token"
+              placeholderTextColor="#64748b"
+              value={deviceTokenToSave}
+              onChangeText={setDeviceTokenToSave}
+              maxLength={32}
+              autoCapitalize="characters"
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalPrimary]}
+                onPress={handleSaveDeviceToken}
+              >
+                <Ionicons name="save-outline" size={20} color="#fff" />
+                <Text style={styles.modalButtonText}>Save Token</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.helpSection}>
+              <Ionicons name="help-circle-outline" size={20} color="#64748b" />
+              <Text style={styles.helpText}>
+                Don't have a token? Ask the owner to invite this device from their app.
+              </Text>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1301,6 +1437,14 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
     },
     headerIcon: {
       marginBottom: 12,
+    },
+    tokenEntryButton: {
+      position: 'absolute',
+      top: 16,
+      right: 16,
+      padding: 8,
+      borderRadius: 20,
+      backgroundColor: '#1e3a8a20',
     },
     title: {
       fontSize: 32,
@@ -2042,6 +2186,27 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       fontWeight: '600',
       marginBottom: 12,
     },
+    pairingModeSection: {
+      borderTopWidth: 1,
+      borderTopColor: '#334155',
+      paddingTop: 20,
+      marginTop: 8,
+    },
+    pairingModeTitle: {
+      color: '#e2e8f0',
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 6,
+    },
+    pairingModeDesc: {
+      color: '#94a3b8',
+      fontSize: 13,
+      lineHeight: 18,
+      marginBottom: 12,
+    },
+    modalWarning: {
+      backgroundColor: '#f59e0b',
+    },
     tokenInput: {
       backgroundColor: '#0f172a',
       color: '#e2e8f0',
@@ -2052,6 +2217,25 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       borderWidth: 1,
       borderColor: '#334155',
       marginBottom: 12,
+    },
+    tokenInputLarge: {
+      fontSize: 16,
+      padding: 16,
+    },
+    helpSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 16,
+      paddingTop: 16,
+      borderTopWidth: 1,
+      borderTopColor: '#334155',
+    },
+    helpText: {
+      color: '#64748b',
+      fontSize: 12,
+      flex: 1,
+      lineHeight: 16,
     },
     resetButton: {
       flex: 1,

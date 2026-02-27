@@ -275,6 +275,17 @@ class ControlCallbacks : public BLECharacteristicCallbacks {
         digitalWrite(LED_STATUS, LOW); 
         break;
 
+      // Enter pairing mode (accept all devices for 60 seconds)
+      case 0xF1: {
+        Serial.println("=== PAIRING MODE ACTIVATED (60 seconds) ===");
+        // Clear whitelist temporarily
+        clearWhitelist();
+        // ESP32 will auto-add first device that connects
+        statusChar->setValue("PAIRING_ON");
+        statusChar->notify();
+        break;
+      }
+
       // Clear whitelist
       case 0xF2:
         clearWhitelist();
