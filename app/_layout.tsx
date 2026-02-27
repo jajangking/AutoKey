@@ -23,7 +23,7 @@ export default function RootLayout() {
             <Stack.Screen name="control" options={{ title: 'Control' }} />
             <Stack.Screen name="history" options={{ title: 'History' }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Settings' }} />
-            <Stack.Screen name="whitelist" options={{ title: 'Whitelist' }} />
+            <Stack.Screen name="whitelist" options={{ presentation: 'modal', title: 'Whitelist' }} />
           </Stack>
           <StatusBar style="light" backgroundColor="#0f172a" translucent={false} />
         </NavigationThemeProvider>

@@ -12,13 +12,13 @@ export default function WhitelistManagementScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        <Text style={styles.title}>Manajemen Whitelist</Text>
         <TouchableOpacity
-          style={styles.backButton}
+          style={styles.closeButton}
           onPress={() => router.back()}
         >
-          <Ionicons name="arrow-back" size={24} color="#e2e8f0" />
+          <Ionicons name="close" size={28} color="#e2e8f0" />
         </TouchableOpacity>
-        <Text style={styles.title}>Manajemen Whitelist</Text>
       </View>
 
       <View style={styles.content}>
@@ -63,18 +63,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#1e3a8a',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-  },
-  backButton: {
-    padding: 4,
+    justifyContent: 'space-between',
   },
   title: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#e2e8f0',
     flex: 1,
-    textAlign: 'center',
-    marginRight: 24,
+  },
+  closeButton: {
+    padding: 4,
   },
   content: {
     flex: 1,

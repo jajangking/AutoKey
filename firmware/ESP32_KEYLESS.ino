@@ -4,488 +4,430 @@
 #include <BLE2902.h>
 #include <Preferences.h>
 
-/* ================= PIN CONFIG ================= */
-#define RELAY_CH1_PIN      27
-#define RELAY_CH2_PIN      26
-#define BUZZER_PIN         5
-#define STATUS_LED_PIN     2
-#define LED_KONTAK_PIN     19
-#define PAIRING_BUTTON     4  // GPIO 4 untuk pairing button
+/* ================= HARDWARE ================= */
 
-/* ================= BLE UUID ================= */
-#define SERVICE_UUID              "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CONTROL_CHAR_UUID         "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define STATUS_CHAR_UUID          "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-#define PAIRING_CHAR_UUID         "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+#define RELAY1 27
+#define RELAY2 26
+#define BUZZER 5
+#define LED_STATUS 2
+#define LED_KONTAK 19
+#define BTN_KONTAK 4
 
-/* ================= WHITELIST CONFIG ================= */
-#define MAX_WHITELIST_SIZE   5
-#define WHITELIST_PREF_NAME  "whitelist"
-#define WHITELIST_KEY        "allowed_devices"
+/* ================= BLE CONFIG ================= */
+
+#define DEVICE_NAME "ESP32_KEYLESS"
+
+#define SERVICE_UUID  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CONTROL_UUID  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define STATUS_UUID   "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define AUTH_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+
+#define MAX_WHITELIST 5
+#define TOKEN_LENGTH 32  // 32 character token
 
 /* ================= GLOBAL ================= */
-BLEServer* pServer = NULL;
-BLECharacteristic* pControlCharacteristic = NULL;
-BLECharacteristic* pStatusCharacteristic = NULL;
-BLECharacteristic* pPairingCharacteristic = NULL;
 
-Preferences preferences;
+BLEServer* pServer;
+BLECharacteristic* controlChar;
+BLECharacteristic* statusChar;
+BLECharacteristic* authChar;
+
+Preferences prefs;
+
+String whitelist[MAX_WHITELIST];
+uint8_t whitelistCount = 0;
 
 bool deviceConnected = false;
-bool oldDeviceConnected = false;
-bool pairingMode = false;
-unsigned long pairingStartTime = 0;
-const unsigned long pairingTimeout = 60000;  // 60 detik pairing mode
+bool authorized = false;
 
-String allowedDevices[MAX_WHITELIST_SIZE];
-int allowedDevicesCount = 0;
-
-/* ===== Non-blocking pulse system ===== */
+unsigned long kontakTimer = 0;
 bool kontakPulseActive = false;
-unsigned long kontakStartTime = 0;
-const unsigned long kontakDuration = 200;
 
-/* ================= HELPER FUNCTIONS ================= */
+unsigned long lastButtonPress = 0;
+unsigned long authTimeout = 0;
 
-// Load whitelist from preferences
+/* ================= SAFE STATE ================= */
+
+void safeState() {
+  digitalWrite(RELAY1, HIGH);
+  digitalWrite(RELAY2, HIGH);
+  digitalWrite(BUZZER, LOW);
+  digitalWrite(LED_KONTAK, LOW);
+}
+
+/* ================= WHITELIST ================= */
+
 void loadWhitelist() {
-  preferences.begin(WHITELIST_PREF_NAME, false);
-  String stored = preferences.getString(WHITELIST_KEY, "");
-  preferences.end();
-  
-  allowedDevicesCount = 0;
-  if (stored.length() > 0) {
-    int startIndex = 0;
-    int endIndex;
-    while ((endIndex = stored.indexOf(',', startIndex)) != -1 && allowedDevicesCount < MAX_WHITELIST_SIZE) {
-      allowedDevices[allowedDevicesCount++] = stored.substring(startIndex, endIndex);
-      startIndex = endIndex + 1;
-    }
-    if (allowedDevicesCount < MAX_WHITELIST_SIZE && startIndex < stored.length()) {
-      allowedDevices[allowedDevicesCount++] = stored.substring(startIndex);
-    }
+  prefs.begin("whitelist", false);
+  whitelistCount = prefs.getUChar("count", 0);
+  for (uint8_t i = 0; i < whitelistCount; i++) {
+    whitelist[i] = prefs.getString(("id" + String(i)).c_str(), "");
   }
+  prefs.end();
   
-  Serial.print("Loaded whitelist (");
-  Serial.print(allowedDevicesCount);
-  Serial.println(" devices):");
-  for (int i = 0; i < allowedDevicesCount; i++) {
-    Serial.print("  - ");
-    Serial.println(allowedDevices[i]);
-  }
+  Serial.print("Whitelist loaded: ");
+  Serial.print(whitelistCount);
+  Serial.println(" tokens");
 }
 
-// Save whitelist to preferences
 void saveWhitelist() {
-  String stored = "";
-  for (int i = 0; i < allowedDevicesCount; i++) {
-    if (i > 0) stored += ",";
-    stored += allowedDevices[i];
+  prefs.begin("whitelist", false);
+  prefs.putUChar("count", whitelistCount);
+  for (uint8_t i = 0; i < whitelistCount; i++) {
+    prefs.putString(("id" + String(i)).c_str(), whitelist[i]);
   }
-  
-  preferences.begin(WHITELIST_PREF_NAME, false);
-  preferences.putString(WHITELIST_KEY, stored);
-  preferences.end();
-  
-  Serial.print("Saved whitelist (");
-  Serial.print(allowedDevicesCount);
-  Serial.println(" devices)");
+  prefs.end();
 }
 
-// Add device to whitelist
-bool addToWhitelist(String macAddress) {
-  // Check if already in whitelist
-  for (int i = 0; i < allowedDevicesCount; i++) {
-    if (allowedDevices[i] == macAddress) {
-      Serial.println("Device already in whitelist");
-      return true;
-    }
-  }
+bool isTokenWhitelisted(String token) {
+  if (whitelistCount == 0) return false;
   
-  // Check if whitelist is full
-  if (allowedDevicesCount >= MAX_WHITELIST_SIZE) {
-    Serial.println("Whitelist is full");
-    return false;
-  }
-  
-  // Add new device
-  allowedDevices[allowedDevicesCount++] = macAddress;
-  saveWhitelist();
-  Serial.print("Added device to whitelist: ");
-  Serial.println(macAddress);
-  return true;
-}
-
-// Remove device from whitelist
-bool removeFromWhitelist(String macAddress) {
-  for (int i = 0; i < allowedDevicesCount; i++) {
-    if (allowedDevices[i] == macAddress) {
-      // Shift remaining devices
-      for (int j = i; j < allowedDevicesCount - 1; j++) {
-        allowedDevices[j] = allowedDevices[j + 1];
-      }
-      allowedDevicesCount--;
-      saveWhitelist();
-      Serial.print("Removed device from whitelist: ");
-      Serial.println(macAddress);
-      return true;
-    }
+  for (uint8_t i = 0; i < whitelistCount; i++) {
+    if (whitelist[i] == token) return true;
   }
   return false;
 }
 
-// Check if device is in whitelist
-bool isDeviceWhitelisted(String macAddress) {
-  // If whitelist is empty, allow all (pairing mode)
-  if (allowedDevicesCount == 0) {
-    Serial.println("Whitelist empty - allowing all devices (pairing mode)");
-    return true;
+void addTokenToWhitelist(String token) {
+  if (whitelistCount >= MAX_WHITELIST) {
+    Serial.println("Whitelist FULL");
+    return;
   }
   
-  for (int i = 0; i < allowedDevicesCount; i++) {
-    if (allowedDevices[i] == macAddress) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Get MAC address as string
-String getMacAddressString(BLEServer* pServer) {
-  esp_bd_addr_t addr;
-  esp_read_mac(addr, ESP_MAC_BT);
-  char mac[18];
-  sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X", 
-          addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-  return String(mac);
-}
-
-// Enter pairing mode
-void enterPairingMode() {
-  pairingMode = true;
-  pairingStartTime = millis();
-  digitalWrite(STATUS_LED_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(200);
-  digitalWrite(BUZZER_PIN, LOW);
-  Serial.println("=== PAIRING MODE ACTIVATED (60 seconds) ===");
-}
-
-// Exit pairing mode
-void exitPairingMode() {
-  pairingMode = false;
-  digitalWrite(STATUS_LED_PIN, LOW);
-  Serial.println("=== PAIRING MODE DEACTIVATED ===");
-}
-
-/* ================= SERVER CALLBACK ================= */
-class MyServerCallbacks: public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {
-    // Get client MAC address
-    esp_bd_addr_t client_addr;
-    uint16_t client_handle = pServer->getConnId();
-    
-    // Get connection info
-    BLEAddress clientAddress = pServer->getPeerAddress(client_handle);
-    String clientMac = clientAddress.toString();
-    
-    Serial.print("Connection attempt from: ");
-    Serial.println(clientMac);
-    
-    // Check whitelist
-    if (!isDeviceWhitelisted(clientMac) && !pairingMode) {
-      Serial.println("Device NOT in whitelist - REJECTING connection!");
-      digitalWrite(BUZZER_PIN, HIGH);
-      delay(500);
-      digitalWrite(BUZZER_PIN, LOW);
-      pServer->disconnect(client_handle);
+  // Check if already exists
+  for (uint8_t i = 0; i < whitelistCount; i++) {
+    if (whitelist[i] == token) {
+      Serial.println("Token already in whitelist");
       return;
     }
-    
-    deviceConnected = true;
-    digitalWrite(STATUS_LED_PIN, HIGH);
-    Serial.println("BLE Connected (whitelisted)");
-    
-    // If in pairing mode, add device to whitelist
-    if (pairingMode) {
-      if (addToWhitelist(clientMac)) {
-        Serial.println("Device added to whitelist during pairing");
-        // Send notification that device was added
-        uint8_t pairResponse = 0x01;  // Success
-        pPairingCharacteristic->setValue(&pairResponse, 1);
-        pPairingCharacteristic->notify();
-      }
-      exitPairingMode();
-    }
-  }
-
-  void onDisconnect(BLEServer* pServer) {
-    deviceConnected = false;
-    digitalWrite(STATUS_LED_PIN, LOW);
-    Serial.println("BLE Disconnected");
-
-    // Fail-safe OFF
-    digitalWrite(RELAY_CH1_PIN, HIGH);
-    digitalWrite(RELAY_CH2_PIN, HIGH);
-    digitalWrite(BUZZER_PIN, LOW);
-    digitalWrite(LED_KONTAK_PIN, LOW);
-
-    pServer->getAdvertising()->start();
   }
   
-  // Override onConnect with BLEAddress for proper MAC detection
-  void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
-    // This will be handled in the main onConnect
+  whitelist[whitelistCount++] = token;
+  saveWhitelist();
+  Serial.print("Token added to whitelist. Count: ");
+  Serial.println(whitelistCount);
+}
+
+void clearWhitelist() {
+  prefs.begin("whitelist", false);
+  prefs.clear();
+  prefs.end();
+  whitelistCount = 0;
+  for (uint8_t i = 0; i < MAX_WHITELIST; i++) {
+    whitelist[i] = "";
+  }
+  Serial.println("Whitelist CLEARED");
+}
+
+// Generate random token (32 char hex string)
+String generateToken() {
+  String token = "";
+  randomSeed(millis() + analogRead(0)); // Use analog noise for seed
+  
+  for (int i = 0; i < TOKEN_LENGTH; i++) {
+    byte randomByte = random(0, 256);
+    char hex[3];
+    sprintf(hex, "%02X", randomByte);
+    token += String(hex);
+  }
+  return token;
+}
+
+/* ================= CALLBACK ================= */
+
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* server) {
+    deviceConnected = true;
+    authorized = false;
+    digitalWrite(LED_STATUS, HIGH);
+    
+    // Set auth timeout (5 seconds)
+    authTimeout = millis() + 5000;
+    
+    Serial.println("Connected - waiting for auth token...");
+  }
+
+  void onDisconnect(BLEServer* server) {
+    deviceConnected = false;
+    authorized = false;
+    safeState();
+    digitalWrite(LED_STATUS, LOW);
+    
+    Serial.println("Disconnected - Fail Safe");
+    
+    // Restart advertising
+    BLEDevice::startAdvertising();
   }
 };
 
-/* ================= CONTROL CALLBACK ================= */
-class ControlCallbacks: public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pCharacteristic) {
+class AuthCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* characteristic) override {
+    std::string value = characteristic->getValue();
+    if (value.length() == 0) return;
 
-    if (!deviceConnected) return;
+    String token = "";
+    for (size_t i = 0; i < value.length(); i++) {
+      token += (char)value[i];
+    }
 
-    std::string rxValue = pCharacteristic->getValue();
-    if (rxValue.length() != 1) {
-      Serial.println("Invalid data length");
+    Serial.print("Auth token received (");
+    Serial.print(value.length());
+    Serial.print(" chars): ");
+    Serial.println(token);
+
+    // Check if whitelist is empty - auto-add first token as OWNER
+    if (whitelistCount == 0) {
+      Serial.println("Whitelist empty - auto-adding as OWNER");
+      addTokenToWhitelist(token);
+      authorized = true;
+      
+      statusChar->setValue("OWNER_ADDED");
+      statusChar->notify();
+      
+      Serial.println("OWNER_ADDED sent");
       return;
     }
 
-    uint8_t cmd = rxValue[0];
+    // Check if token matches whitelist
+    if (isTokenWhitelisted(token)) {
+      authorized = true;
+      Serial.println("AUTHORIZED");
+      statusChar->setValue("AUTHORIZED");
+      statusChar->notify();
+      Serial.println("AUTHORIZED sent");
+    } else {
+      authorized = false;
+      Serial.println("DENIED - Token not in whitelist");
+      statusChar->setValue("DENIED");
+      statusChar->notify();
+      
+      // Disconnect after short delay
+      delay(200);
+      pServer->disconnect(0);
+      Serial.println("Connection rejected - DENIED");
+    }
+  }
+};
 
-    Serial.print("CMD: 0x");
+class ControlCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* characteristic) override {
+    // Check authorization first
+    if (!authorized) {
+      Serial.println("Command REJECTED - not authorized");
+      statusChar->setValue("NOT_AUTH");
+      statusChar->notify();
+      return;
+    }
+
+    std::string value = characteristic->getValue();
+    if (value.length() == 0) return;
+
+    uint8_t cmd = value[0];
+
+    Serial.print("Command: 0x");
     Serial.println(cmd, HEX);
 
-    switch(cmd) {
-
-      case 0x01: // Relay CH1 ON
-        digitalWrite(RELAY_CH1_PIN, LOW);
+    switch (cmd) {
+      // Relay CH1
+      case 0x01: 
+        digitalWrite(RELAY1, LOW); 
+        Serial.println("Relay CH1 ON");
+        break;
+      case 0x10: 
+        digitalWrite(RELAY1, HIGH); 
+        Serial.println("Relay CH1 OFF");
         break;
 
-      case 0x10: // Relay CH1 OFF
-        digitalWrite(RELAY_CH1_PIN, HIGH);
+      // Relay CH2
+      case 0x02: 
+        digitalWrite(RELAY2, LOW); 
+        Serial.println("Relay CH2 ON");
+        break;
+      case 0x20: 
+        digitalWrite(RELAY2, HIGH); 
+        Serial.println("Relay CH2 OFF");
         break;
 
-      case 0x02: // Relay CH2 ON
-        digitalWrite(RELAY_CH2_PIN, LOW);
+      // Buzzer
+      case 0xB1: 
+        digitalWrite(BUZZER, HIGH); 
+        Serial.println("Buzzer ON");
+        break;
+      case 0xB0: 
+        digitalWrite(BUZZER, LOW); 
+        Serial.println("Buzzer OFF");
         break;
 
-      case 0x20: // Relay CH2 OFF
-        digitalWrite(RELAY_CH2_PIN, HIGH);
-        break;
-
-      case 0xB1: // Buzzer ON
-        digitalWrite(BUZZER_PIN, HIGH);
-        break;
-
-      case 0xB0: // Buzzer OFF
-        digitalWrite(BUZZER_PIN, LOW);
-        break;
-
-      case 0xC1: // Button Kontak Pulse
-        digitalWrite(LED_KONTAK_PIN, HIGH);
+      // Kontak pulse (momentary)
+      case 0xC1:
+        digitalWrite(LED_KONTAK, HIGH);
+        digitalWrite(RELAY1, LOW);
+        kontakTimer = millis();
         kontakPulseActive = true;
-        kontakStartTime = millis();
+        Serial.println("Kontak PULSE");
         break;
 
-      case 0xE1:
-        digitalWrite(LED_KONTAK_PIN, HIGH);
+      // LED Status
+      case 0xE1: 
+        digitalWrite(LED_STATUS, HIGH); 
+        break;
+      case 0xE0: 
+        digitalWrite(LED_STATUS, LOW); 
         break;
 
-      case 0xE0:
-        digitalWrite(LED_KONTAK_PIN, LOW);
+      // Clear whitelist
+      case 0xF2:
+        clearWhitelist();
+        statusChar->setValue("WL_CLEARED");
+        statusChar->notify();
+        Serial.println("Whitelist cleared via command");
         break;
 
-      case 0xF1: // Enter pairing mode
-        enterPairingMode();
+      // Get whitelist count
+      case 0xF3: {
+        uint8_t count = whitelistCount;
+        statusChar->setValue(&count, 1);
+        statusChar->notify();
+        Serial.print("Whitelist count sent: ");
+        Serial.println(count);
         break;
+      }
 
-      case 0xF2: // Clear whitelist
-        preferences.begin(WHITELIST_PREF_NAME, false);
-        preferences.clear();
-        preferences.end();
-        loadWhitelist();
-        Serial.println("Whitelist cleared");
-        break;
-
-      case 0xF3: // Get whitelist count (send back via status characteristic)
-        {
-          uint8_t count = allowedDevicesCount;
-          pStatusCharacteristic->setValue(&count, 1);
-          pStatusCharacteristic->notify();
-          Serial.print("Whitelist count: ");
-          Serial.println(count);
+      // Read whitelist entries (returns all tokens)
+      case 0xF4: {
+        Serial.println("Reading whitelist entries...");
+        
+        // Send count first
+        uint8_t count = whitelistCount;
+        statusChar->setValue(&count, 1);
+        statusChar->notify();
+        delay(50);
+        
+        // Send each token
+        for (uint8_t i = 0; i < whitelistCount; i++) {
+          // Format: index (1 byte) + token length (1 byte) + token string
+          String token = whitelist[i];
+          uint8_t tokenLen = token.length();
+          
+          // Create buffer: [index][length][token bytes...]
+          uint8_t buffer[34]; // 1 + 1 + 32 max
+          buffer[0] = i; // Index
+          buffer[1] = tokenLen; // Token length
+          
+          for (int j = 0; j < tokenLen && j < 32; j++) {
+            buffer[2 + j] = token.charAt(j);
+          }
+          
+          statusChar->setValue(buffer, 2 + tokenLen);
+          statusChar->notify();
+          delay(100); // Give time for BLE to send
         }
+        
+        Serial.println("Whitelist entries sent");
         break;
+      }
 
       default:
-        Serial.println("Unknown CMD");
+        Serial.println("Unknown command");
+        statusChar->setValue("UNKNOWN");
+        statusChar->notify();
         break;
     }
-  }
-};
-
-/* ================= PAIRING CALLBACK ================= */
-class PairingCallbacks: public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pCharacteristic) {
-    std::string rxValue = pCharacteristic->getValue();
-    
-    if (rxValue.length() >= 1) {
-      uint8_t cmd = rxValue[0];
-      
-      switch(cmd) {
-        case 0x01: // Request pairing mode
-          enterPairingMode();
-          break;
-          
-        case 0x02: // Remove specific device (need MAC in payload)
-          // For simplicity, we'll handle this via control characteristic
-          break;
-          
-        case 0x03: // Get whitelist info
-          {
-            // Send back whitelist count and status
-            uint8_t response[2] = {allowedDevicesCount, pairingMode ? 1 : 0};
-            pPairingCharacteristic->setValue(response, 2);
-            pPairingCharacteristic->notify();
-          }
-          break;
-      }
-    }
-  }
-  
-  void onRead(BLECharacteristic *pCharacteristic) {
-    // Send current whitelist status
-    uint8_t response[2] = {allowedDevicesCount, pairingMode ? 1 : 0};
-    pPairingCharacteristic->setValue(response, 2);
   }
 };
 
 /* ================= SETUP ================= */
+
 void setup() {
   Serial.begin(115200);
+  delay(1000);
 
-  pinMode(RELAY_CH1_PIN, OUTPUT);
-  pinMode(RELAY_CH2_PIN, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  pinMode(LED_KONTAK_PIN, OUTPUT);
-  pinMode(PAIRING_BUTTON, INPUT_PULLUP);
+  pinMode(RELAY1, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(LED_STATUS, OUTPUT);
+  pinMode(LED_KONTAK, OUTPUT);
+  pinMode(BTN_KONTAK, INPUT_PULLUP);
 
-  // SAFE OFF (ACTIVE LOW relay)
-  digitalWrite(RELAY_CH1_PIN, HIGH);
-  digitalWrite(RELAY_CH2_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(STATUS_LED_PIN, LOW);
-  digitalWrite(LED_KONTAK_PIN, LOW);
+  safeState();
 
-  // Load whitelist from preferences
+  prefs.begin("whitelist", false);
   loadWhitelist();
+  prefs.end();
 
-  // Boot self-test (no delay in BLE zone yet)
-  digitalWrite(RELAY_CH1_PIN, LOW);
-  digitalWrite(RELAY_CH2_PIN, LOW);
-  digitalWrite(BUZZER_PIN, HIGH);
-  digitalWrite(LED_KONTAK_PIN, HIGH);
-  delay(300);
-  digitalWrite(RELAY_CH1_PIN, HIGH);
-  digitalWrite(RELAY_CH2_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(LED_KONTAK_PIN, LOW);
-
-  Serial.println("Starting BLE...");
-
-  BLEDevice::init("ESP32_KEYLESS");
+  BLEDevice::init(DEVICE_NAME);
   BLEDevice::setMTU(128);
 
   pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+  pServer->setCallbacks(new ServerCallbacks());
 
-  BLEService *pService = pServer->createService(SERVICE_UUID);
+  BLEService* service = pServer->createService(SERVICE_UUID);
 
-  pControlCharacteristic = pService->createCharacteristic(
-      CONTROL_CHAR_UUID,
-      BLECharacteristic::PROPERTY_WRITE
-  );
+  // Control characteristic (WRITE)
+  controlChar = service->createCharacteristic(
+                  CONTROL_UUID,
+                  BLECharacteristic::PROPERTY_WRITE
+                );
+  controlChar->setCallbacks(new ControlCallbacks());
 
-  pControlCharacteristic->setCallbacks(new ControlCallbacks());
+  // Status characteristic (READ + NOTIFY)
+  statusChar = service->createCharacteristic(
+                 STATUS_UUID,
+                 BLECharacteristic::PROPERTY_READ |
+                 BLECharacteristic::PROPERTY_NOTIFY
+               );
+  statusChar->addDescriptor(new BLE2902());
 
-  pStatusCharacteristic = pService->createCharacteristic(
-      STATUS_CHAR_UUID,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
-  );
+  // Auth characteristic (WRITE)
+  authChar = service->createCharacteristic(
+               AUTH_UUID,
+               BLECharacteristic::PROPERTY_WRITE
+             );
+  authChar->setCallbacks(new AuthCallbacks());
 
-  pPairingCharacteristic = pService->createCharacteristic(
-      PAIRING_CHAR_UUID,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY
-  );
+  service->start();
+  pServer->getAdvertising()->start();
 
-  pPairingCharacteristic->setCallbacks(new PairingCallbacks());
-
-  pService->start();
-
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  BLEDevice::startAdvertising();
-
-  Serial.println("Waiting for connection...");
-  
-  // Print whitelist status
-  Serial.print("Whitelist status: ");
-  Serial.print(allowedDevicesCount);
-  Serial.print("/");
-  Serial.println(MAX_WHITELIST_SIZE);
-  if (allowedDevicesCount == 0) {
-    Serial.println("PAIRING MODE: Open to all devices");
+  Serial.println("=== ESP32 KEYLESS READY ===");
+  Serial.print("Whitelist: ");
+  Serial.print(whitelistCount);
+  Serial.println(" tokens");
+  if (whitelistCount == 0) {
+    Serial.println("MODE: OPEN (first token becomes OWNER)");
+  } else {
+    Serial.println("MODE: WHITELIST (only authorized tokens)");
   }
 }
 
 /* ================= LOOP ================= */
+
 void loop() {
+  // Non-blocking kontak pulse (200ms)
+  if (kontakPulseActive && millis() - kontakTimer >= 200) {
+    digitalWrite(RELAY1, HIGH);
+    digitalWrite(LED_KONTAK, LOW);
+    kontakPulseActive = false;
+    Serial.println("Kontak pulse END");
+  }
 
-  // Handle kontak pulse
-  if (kontakPulseActive) {
-    if (millis() - kontakStartTime >= kontakDuration) {
-      digitalWrite(LED_KONTAK_PIN, LOW);
-      kontakPulseActive = false;
+  // Check auth timeout
+  if (deviceConnected && !authorized && authTimeout > 0 && millis() > authTimeout) {
+    Serial.println("Auth timeout - disconnecting");
+    pServer->disconnect(0);
+    authTimeout = 0;
+  }
+
+  // Tombol kontak fisik
+  if (!digitalRead(BTN_KONTAK)) {
+    if (millis() - lastButtonPress > 300) {
+      digitalWrite(LED_KONTAK, HIGH);
+      digitalWrite(RELAY1, LOW);
+      kontakTimer = millis();
+      kontakPulseActive = true;
+      lastButtonPress = millis();
+      Serial.println("Physical button pressed - kontak pulse");
     }
   }
-
-  // Handle pairing mode timeout
-  if (pairingMode && millis() - pairingStartTime >= pairingTimeout) {
-    exitPairingMode();
-  }
-
-  // Handle pairing button (long press for 3 seconds)
-  static unsigned long buttonPressTime = 0;
-  static bool buttonPressed = false;
   
-  if (digitalRead(PAIRING_BUTTON) == LOW) {
-    if (!buttonPressed) {
-      buttonPressed = true;
-      buttonPressTime = millis();
-      Serial.println("Pairing button pressed");
-    }
-    
-    // Long press detected (3 seconds)
-    if (millis() - buttonPressTime >= 3000) {
-      if (!pairingMode) {
-        enterPairingMode();
-      }
-      buttonPressed = false;
-    }
-  } else {
-    buttonPressed = false;
-  }
-
-  // Blink STATUS_LED when in pairing mode
-  if (pairingMode) {
-    static unsigned long lastBlink = 0;
-    if (millis() - lastBlink >= 500) {
-      lastBlink = millis();
-      digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
-    }
-  }
-
   delay(10);
 }

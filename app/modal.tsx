@@ -19,7 +19,7 @@ export default function ModalScreen() {
       <ThemedView style={styles.content}>
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => router.push('/whitelist/index')}
+          onPress={() => router.push('/whitelist')}
         >
           <View style={styles.menuIconContainer}>
             <IconSymbol name="list.bullet.rectangle" size={24} color="#3b82f6" />

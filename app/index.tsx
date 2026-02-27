@@ -11,10 +11,13 @@ import {
   RefreshControl,
   useColorScheme,
   BackHandler,
-  Platform
+  Platform,
+  Clipboard,
+  Modal,
+  TextInput
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useBLE } from '../hooks/useBLE';
+import { useBLE } from '@/hooks/useBLE';
 import { Ionicons, MaterialCommunityIcons, Entypo } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useTheme } from '@/context/ThemeContext';
@@ -23,6 +26,10 @@ import ErrorDisplay from '@/components/ErrorDisplay';
 import BluetoothDeviceItem from '@/components/BluetoothDeviceItem';
 import { router, useFocusEffect } from 'expo-router';
 import SettingsModal from '@/components/SettingsModal';
+
+// BLE UUIDs
+const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const CONTROL_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 
 // Function to determine signal strength color
 const getSignalColor = (rssi: number | undefined) => {
@@ -68,7 +75,13 @@ export default function Index() {
     sendRelayCH1Command,
     sendRelayCH2Command,
     sendBuzzerCommand,
-    sendLEDCommand
+    sendLEDCommand,
+    readESP32Whitelist,
+    clearESP32Whitelist,
+    whitelistEntries,
+    whitelistCount,
+    generateToken,
+    bleManagerRef
   } = useBLE();
   
   const { theme, toggleTheme } = useTheme();
@@ -80,6 +93,156 @@ export default function Index() {
     // Save the selected device to storage
     saveSelectedDevice(device);
   };
+
+  // Whitelist handlers
+  const handleReadWhitelist = async () => {
+    if (state.connectionStatus !== 'connected') {
+      Alert.alert('Tidak Terhubung', 'Hubungkan ke ESP32 terlebih dahulu.', [{ text: 'OK' }]);
+      return;
+    }
+    setWhitelistLoading(true);
+    try {
+      await readESP32Whitelist();
+      addLog('Whitelist read completed');
+    } catch (error) {
+      addLog(`Read whitelist error: ${(error as Error).message}`);
+      Alert.alert('Error', `Failed to read whitelist: ${(error as Error).message}`, [{ text: 'OK' }]);
+    } finally {
+      setWhitelistLoading(false);
+    }
+  };
+
+  const handleClearWhitelist = () => {
+    if (state.connectionStatus !== 'connected') {
+      Alert.alert('Tidak Terhubung', 'Hubungkan ke ESP32 terlebih dahulu.', [{ text: 'OK' }]);
+      return;
+    }
+    Alert.alert(
+      'Hapus Whitelist',
+      `Hapus ${whitelistCount} token dari ESP32?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            setWhitelistLoading(true);
+            await clearESP32Whitelist();
+            setWhitelistLoading(false);
+          }
+        }
+      ]
+    );
+  };
+
+  // Generate new token for sharing
+  const handleGenerateToken = () => {
+    const newToken = generateToken();
+    setGeneratedToken(newToken);
+    setShowInviteModal(true);
+  };
+
+  // Copy token to clipboard
+  const handleCopyToken = async () => {
+    try {
+      await Clipboard.setString(generatedToken);
+      Alert.alert('Copied!', 'Token copied to clipboard', [{ text: 'OK' }]);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to copy token', [{ text: 'OK' }]);
+    }
+  };
+
+  // Add token manually
+  const handleAddToken = async () => {
+    if (state.connectionStatus !== 'connected') {
+      Alert.alert('Tidak Terhubung', 'Hubungkan ke ESP32 terlebih dahulu.', [{ text: 'OK' }]);
+      return;
+    }
+
+    const token = manualTokenInput.trim().toUpperCase();
+    
+    // Validate token format (32 char hex)
+    if (!/^[0-9A-F]{32}$/.test(token)) {
+      Alert.alert('Invalid Token', 'Token must be 32 hexadecimal characters', [{ text: 'OK' }]);
+      return;
+    }
+
+    try {
+      setWhitelistLoading(true);
+      addLog(`Adding token to whitelist: ${token.substring(0, 8)}...`);
+      
+      // Use readESP32Whitelist which will trigger ESP32 to send entries
+      // For adding, we need to send command directly
+      const addTokenCommand = async () => {
+        const tokenBytes = [0xFE];
+        for (let i = 0; i < token.length; i++) {
+          tokenBytes.push(token.charCodeAt(i));
+        }
+        
+        const tokenBuffer = new Uint8Array(tokenBytes);
+        const tokenData = btoa(String.fromCharCode(...tokenBuffer));
+        
+        // Get connected device from state
+        const device = state.scannedDevices.find(d => d.id === state.connectedDeviceId);
+        if (!device) {
+          throw new Error('No connected device found');
+        }
+        
+        await device.writeCharacteristicWithResponseForService(
+          SERVICE_UUID,
+          CONTROL_CHARACTERISTIC_UUID,
+          tokenData
+        );
+      };
+      
+      await addTokenCommand();
+      
+      addLog(`Added token to whitelist: ${token.substring(0, 8)}...`);
+      setManualTokenInput('');
+      Alert.alert('Success!', 'Token added to whitelist', [{ text: 'OK' }]);
+      
+      // Refresh whitelist after short delay
+      setTimeout(async () => {
+        await readESP32Whitelist();
+      }, 500);
+    } catch (error) {
+      Alert.alert('Error', `Failed to add token: ${(error as Error).message}`, [{ text: 'OK' }]);
+    } finally {
+      setWhitelistLoading(false);
+    }
+  };
+
+  // State for auth status
+  const [authStatus, setAuthStatus] = useState<'none' | 'pending' | 'authorized' | 'denied'>('none');
+  
+  // State for whitelist section
+  const [showWhitelistSection, setShowWhitelistSection] = useState(false);
+  const [whitelistLoading, setWhitelistLoading] = useState(false);
+  
+  // State for invite token generation
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [generatedToken, setGeneratedToken] = useState<string>('');
+  const [manualTokenInput, setManualTokenInput] = useState<string>('');
+
+  // Handle auth status changes when connected
+  useEffect(() => {
+    if (state.connectionStatus === 'connected') {
+      // Auth is automatically attempted after connection
+      setAuthStatus('pending');
+      addLog('Waiting for authentication response...');
+      
+      // Set timeout for auth response (2 seconds)
+      const timeoutId = setTimeout(() => {
+        // Assume authorized if still connected
+        setAuthStatus('authorized');
+        addLog('Auth status: Authorized (assumed)');
+      }, 2000);
+      
+      return () => clearTimeout(timeoutId);
+    } else {
+      setAuthStatus('none');
+    }
+  }, [state.connectionStatus]);
 
   // State for debug visibility toggle
   const [showDebug, setShowDebug] = useState(false);
@@ -259,17 +422,17 @@ export default function Index() {
             <Ionicons name="bluetooth" size={24} color="#3b82f6" />
             <Text style={styles.sectionTitle}>Connection Status</Text>
           </View>
-          
+
           <View style={styles.statusContainer}>
             <View style={styles.statusRow}>
-              <Ionicons 
-                name={state.connectionStatus === 'connected' ? 'bluetooth' : 
-                      state.connectionStatus === 'connecting' ? 'bluetooth-sharp' : 
-                      'bluetooth-outline'} 
-                size={20} 
-                color={state.connectionStatus === 'connected' ? '#4ade80' : 
-                       state.connectionStatus === 'connecting' ? '#fbbf24' : 
-                       '#f87171'} 
+              <Ionicons
+                name={state.connectionStatus === 'connected' ? 'bluetooth' :
+                      state.connectionStatus === 'connecting' ? 'bluetooth-sharp' :
+                      'bluetooth-outline'}
+                size={20}
+                color={state.connectionStatus === 'connected' ? '#4ade80' :
+                       state.connectionStatus === 'connecting' ? '#fbbf24' :
+                       '#f87171'}
               />
               <Text style={styles.statusText}>
                 Status:
@@ -283,6 +446,34 @@ export default function Index() {
                 </Text>
               </Text>
             </View>
+
+            {/* Auth Status Indicator */}
+            {state.connectionStatus === 'connected' && (
+              <View style={styles.statusRow}>
+                <Ionicons
+                  name={authStatus === 'authorized' ? 'shield-checkmark' :
+                        authStatus === 'denied' ? 'shield-outline' :
+                        'hourglass-outline'}
+                  size={20}
+                  color={authStatus === 'authorized' ? '#4ade80' :
+                         authStatus === 'denied' ? '#ef4444' :
+                         '#fbbf24'}
+                />
+                <Text style={styles.statusText}>
+                  Auth:
+                  <Text style={[
+                    styles.statusValue,
+                    authStatus === 'authorized' ? styles.connected :
+                    authStatus === 'denied' ? styles.disconnected :
+                    styles.connecting
+                  ]}>
+                    {' '}{authStatus === 'authorized' ? 'Authorized' :
+                          authStatus === 'denied' ? 'Denied' :
+                          'Pending...'}
+                  </Text>
+                </Text>
+              </View>
+            )}
 
             {state.connectedDeviceId && (
               <>
@@ -862,15 +1053,203 @@ export default function Index() {
           <Text style={styles.buttonText}> Settings</Text>
         </TouchableOpacity>
 
-        {/* Whitelist Button */}
+        {/* Whitelist Section */}
         <TouchableOpacity
           style={styles.whitelistButton}
-          onPress={() => router.push('/whitelist')}
+          onPress={() => setShowWhitelistSection(!showWhitelistSection)}
         >
-          <Ionicons name="list-outline" size={20} color="#ffffff" />
-          <Text style={styles.buttonText}> Whitelist</Text>
+          <Ionicons 
+            name={showWhitelistSection ? 'chevron-up' : 'list-outline'} 
+            size={20} 
+            color="#ffffff" 
+          />
+          <Text style={styles.buttonText}>
+            {showWhitelistSection ? 'Hide Whitelist' : 'Whitelist'}
+          </Text>
+          {whitelistCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{whitelistCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
+
+        {/* Expandable Whitelist Content */}
+        {showWhitelistSection && (
+          <View style={styles.whitelistContent}>
+            <View style={styles.whitelistHeader}>
+              <View style={styles.whitelistTitleRow}>
+                <Ionicons name="shield-checkmark" size={24} color="#4ade80" />
+                <Text style={styles.whitelistTitle}>ESP32 Whitelist</Text>
+              </View>
+              <View style={styles.whitelistActions}>
+                <TouchableOpacity
+                  style={[styles.wlButton, styles.wlSuccess, whitelistLoading && styles.wlButtonDisabled]}
+                  onPress={handleGenerateToken}
+                  disabled={state.connectionStatus !== 'connected'}
+                >
+                  <Ionicons name="person-add" size={18} color="#fff" />
+                  <Text style={styles.wlButtonText}>Invite</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.wlButton, styles.wlPrimary, whitelistLoading && styles.wlButtonDisabled]}
+                  onPress={handleReadWhitelist}
+                  disabled={whitelistLoading || state.connectionStatus !== 'connected'}
+                >
+                  <Ionicons 
+                    name={whitelistLoading ? 'hourglass-outline' : 'refresh-outline'} 
+                    size={18} 
+                    color="#fff" 
+                  />
+                  <Text style={styles.wlButtonText}>
+                    {whitelistLoading ? 'Loading...' : 'Read'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.wlButton, styles.wlDanger, whitelistLoading && styles.wlButtonDisabled]}
+                  onPress={handleClearWhitelist}
+                  disabled={whitelistLoading || state.connectionStatus !== 'connected'}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#fff" />
+                  <Text style={styles.wlButtonText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Status Bar */}
+            <View style={styles.wlStatusBar}>
+              <View style={styles.wlStatusItem}>
+                <Ionicons name="layers-outline" size={16} color="#3b82f6" />
+                <Text style={styles.wlStatusText}>
+                  {whitelistCount} {whitelistCount === 1 ? 'Token' : 'Tokens'}
+                </Text>
+              </View>
+              <View style={styles.wlStatusItem}>
+                <Ionicons 
+                  name={state.connectionStatus === 'connected' ? 'checkmark-circle' : 'close-circle'} 
+                  size={16} 
+                  color={state.connectionStatus === 'connected' ? '#4ade80' : '#ef4444'} 
+                />
+                <Text style={styles.wlStatusText}>
+                  {state.connectionStatus === 'connected' ? 'Connected' : 'Disconnected'}
+                </Text>
+              </View>
+            </View>
+
+            {whitelistEntries.length === 0 ? (
+              <View style={styles.wlEmpty}>
+                <View style={styles.wlEmptyIcon}>
+                  <Ionicons name="shield-outline" size={48} color="#64748b" />
+                </View>
+                <Text style={styles.wlEmptyTitle}>
+                  {whitelistCount === 0 ? 'Whitelist Kosong' : 'Belum Ada Data'}
+                </Text>
+                <Text style={styles.wlEmptyText}>
+                  {whitelistCount === 0
+                    ? 'ESP32 dalam mode OWNER\nDevice pertama yang connect otomatis jadi owner'
+                    : 'Tekan "Read" untuk memuat token dari ESP32'}
+                </Text>
+                {whitelistCount === 0 && (
+                  <TouchableOpacity
+                    style={styles.wlEmptyAction}
+                    onPress={handleGenerateToken}
+                    disabled={state.connectionStatus !== 'connected'}
+                  >
+                    <Ionicons name="person-add" size={16} color="#3b82f6" />
+                    <Text style={styles.wlEmptyActionText}>Invite Device</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <View style={styles.wlList}>
+                <View style={styles.wlListHeader}>
+                  <Text style={styles.wlListTitle}>Registered Tokens</Text>
+                  <Text style={styles.wlListCount}>{whitelistEntries.length} items</Text>
+                </View>
+                {whitelistEntries.map((token, index) => (
+                  <View key={index} style={styles.wlToken}>
+                    <View style={styles.wlIndex}>
+                      <Text style={styles.wlIndexText}>{index + 1}</Text>
+                    </View>
+                    <View style={styles.wlTokenContent}>
+                      <Text style={styles.wlTokenLabel}>Token #{index + 1}</Text>
+                      <Text style={styles.wlTokenText} selectable>{token}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.wlTokenAction}
+                      onPress={() => {
+                        Clipboard.setString(token);
+                        Alert.alert('Copied!', 'Token copied to clipboard', [{ text: 'OK' }]);
+                      }}
+                    >
+                      <Ionicons name="copy-outline" size={18} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
+
+      {/* Invite Token Modal */}
+      <Modal
+        visible={showInviteModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowInviteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Invite New Device</Text>
+              <TouchableOpacity onPress={() => setShowInviteModal(false)}>
+                <Ionicons name="close" size={28} color="#e2e8f0" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              Share this token with the new device. They need to enter it manually to join the whitelist.
+            </Text>
+
+            <View style={styles.tokenDisplay}>
+              <Text style={styles.tokenText} selectable>{generatedToken}</Text>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalPrimary]}
+                onPress={handleCopyToken}
+              >
+                <Ionicons name="copy-outline" size={20} color="#fff" />
+                <Text style={styles.modalButtonText}>Copy Token</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.manualAddSection}>
+              <Text style={styles.manualAddTitle}>Or Add Token Manually</Text>
+              <TextInput
+                style={styles.tokenInput}
+                placeholder="Enter 32-char hex token"
+                placeholderTextColor="#64748b"
+                value={manualTokenInput}
+                onChangeText={setManualTokenInput}
+                maxLength={32}
+                autoCapitalize="characters"
+              />
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalSuccess]}
+                onPress={handleAddToken}
+                disabled={whitelistLoading}
+              >
+                <Ionicons name="add-circle" size={20} color="#fff" />
+                <Text style={styles.modalButtonText}>
+                  {whitelistLoading ? 'Adding...' : 'Add to Whitelist'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Animated.View>
     <ErrorDisplay
       visible={showErrorDisplay}
@@ -880,6 +1259,7 @@ export default function Index() {
       visible={showSettingsModal}
       onClose={() => setShowSettingsModal(false)}
       bleState={state}
+      isAuthorized={authStatus === 'authorized'}
       sendRelayCH1Command={sendRelayCH1Command}
       sendRelayCH2Command={sendRelayCH2Command}
       sendBuzzerCommand={sendBuzzerCommand}
@@ -1392,6 +1772,286 @@ const getStyles = (theme: 'light' | 'dark' | 'oled') => {
       gap: 8,
       marginTop: 12,
       marginHorizontal: 16,
+      position: 'relative',
+    },
+    badge: {
+      backgroundColor: '#ef4444',
+      borderRadius: 10,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      marginLeft: 4,
+    },
+    badgeText: {
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: 'bold',
+    },
+    whitelistContent: {
+      backgroundColor: '#1e293b',
+      marginHorizontal: 16,
+      marginTop: 12,
+      borderRadius: 16,
+      padding: 0,
+      borderWidth: 1,
+      borderColor: '#334155',
+      overflow: 'hidden',
+    },
+    whitelistHeader: {
+      padding: 16,
+      backgroundColor: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+      borderBottomWidth: 1,
+      borderBottomColor: '#334155',
+    },
+    whitelistTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 12,
+    },
+    whitelistTitle: {
+      color: '#e2e8f0',
+      fontSize: 18,
+      fontWeight: 'bold',
+      flex: 1,
+    },
+    whitelistActions: {
+      flexDirection: 'row',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    wlButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderRadius: 10,
+      minWidth: 85,
+    },
+    wlButtonDisabled: {
+      opacity: 0.6,
+    },
+    wlPrimary: {
+      backgroundColor: '#3b82f6',
+    },
+    wlDanger: {
+      backgroundColor: '#ef4444',
+    },
+    wlButtonText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    wlStatusBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      padding: 12,
+      backgroundColor: '#0f172a',
+      borderBottomWidth: 1,
+      borderBottomColor: '#334155',
+    },
+    wlStatusItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    wlStatusText: {
+      color: '#94a3b8',
+      fontSize: 13,
+      fontWeight: '500',
+    },
+    wlEmpty: {
+      alignItems: 'center',
+      paddingVertical: 40,
+      paddingHorizontal: 20,
+      gap: 12,
+    },
+    wlEmptyTitle: {
+      color: '#e2e8f0',
+      fontSize: 16,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    wlEmptyText: {
+      color: '#64748b',
+      fontSize: 13,
+      textAlign: 'center',
+      lineHeight: 20,
+    },
+    wlEmptyAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      backgroundColor: '#1e3a8a20',
+      borderRadius: 20,
+    },
+    wlEmptyActionText: {
+      color: '#3b82f6',
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    wlList: {
+      padding: 16,
+    },
+    wlListHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: '#334155',
+    },
+    wlListTitle: {
+      color: '#e2e8f0',
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    wlListCount: {
+      color: '#64748b',
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    wlToken: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#0f172a',
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: '#334155',
+      gap: 12,
+    },
+    wlIndex: {
+      backgroundColor: '#3b82f6',
+      borderRadius: 10,
+      width: 28,
+      height: 28,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    wlIndexText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: 'bold',
+    },
+    wlTokenContent: {
+      flex: 1,
+    },
+    wlTokenLabel: {
+      color: '#64748b',
+      fontSize: 10,
+      marginBottom: 2,
+    },
+    wlTokenText: {
+      color: '#4ade80',
+      fontSize: 13,
+      fontFamily: 'monospace',
+      letterSpacing: 0.5,
+    },
+    wlTokenAction: {
+      padding: 8,
+      borderRadius: 8,
+      backgroundColor: '#1e293b',
+    },
+    wlSuccess: {
+      backgroundColor: '#10b981',
+    },
+    // Modal styles
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+      justifyContent: 'center',
+      padding: 20,
+    },
+    modalContent: {
+      backgroundColor: '#1e293b',
+      borderRadius: 20,
+      padding: 24,
+      borderWidth: 1,
+      borderColor: '#334155',
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    modalTitle: {
+      color: '#e2e8f0',
+      fontSize: 20,
+      fontWeight: 'bold',
+      flex: 1,
+    },
+    modalDescription: {
+      color: '#94a3b8',
+      fontSize: 14,
+      lineHeight: 20,
+      marginBottom: 20,
+    },
+    tokenDisplay: {
+      backgroundColor: '#0f172a',
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: '#334155',
+      marginBottom: 16,
+    },
+    tokenText: {
+      color: '#4ade80',
+      fontSize: 14,
+      fontFamily: 'monospace',
+      letterSpacing: 0.5,
+    },
+    modalActions: {
+      marginBottom: 24,
+    },
+    modalButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 14,
+      paddingHorizontal: 20,
+      borderRadius: 12,
+      gap: 8,
+      marginBottom: 12,
+    },
+    modalPrimary: {
+      backgroundColor: '#3b82f6',
+    },
+    modalSuccess: {
+      backgroundColor: '#10b981',
+    },
+    modalButtonText: {
+      color: '#fff',
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    manualAddSection: {
+      borderTopWidth: 1,
+      borderTopColor: '#334155',
+      paddingTop: 20,
+    },
+    manualAddTitle: {
+      color: '#e2e8f0',
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 12,
+    },
+    tokenInput: {
+      backgroundColor: '#0f172a',
+      color: '#e2e8f0',
+      borderRadius: 12,
+      padding: 14,
+      fontSize: 14,
+      fontFamily: 'monospace',
+      borderWidth: 1,
+      borderColor: '#334155',
+      marginBottom: 12,
     },
     resetButton: {
       flex: 1,

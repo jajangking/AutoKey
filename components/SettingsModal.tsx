@@ -18,15 +18,16 @@ interface SettingsModalProps {
     connectionStatus: 'disconnected' | 'connecting' | 'connected';
     contactStatus: boolean;
   };
+  isAuthorized: boolean;
   sendRelayCH1Command: (on: boolean) => Promise<boolean>;
   sendRelayCH2Command: (on: boolean) => Promise<boolean>;
   sendBuzzerCommand: (on: boolean) => Promise<boolean>;
   sendLEDCommand: (on: boolean) => Promise<boolean>;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleState, sendRelayCH1Command, sendRelayCH2Command, sendBuzzerCommand, sendLEDCommand }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleState, isAuthorized, sendRelayCH1Command, sendRelayCH2Command, sendBuzzerCommand, sendLEDCommand }) => {
   const { theme } = useTheme();
-  
+
   const [settings, setSettings] = useState({
     kontakOn: false,
     switchStandar: false,
@@ -85,21 +86,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
   type SettingName = keyof typeof settings;
 
   const toggleSetting = async (settingName: SettingName) => {
+    // Check authorization first
+    if (bleState.connectionStatus === 'connected' && !isAuthorized) {
+      Alert.alert('Not Authorized', 'Waiting for authentication. Please wait...');
+      return;
+    }
+
     const currentValue = settings[settingName];
     const newValue = !currentValue;
-    
+
     // Update local state immediately for UI responsiveness
     const updatedSettings = {
       ...settings,
       [settingName]: newValue
     };
-    
+
     setSettings(updatedSettings);
-    
+
     // Send command to ESP32 based on the setting being toggled
     let commandSuccess = true;
-    
-    if (bleState.connectionStatus === 'connected') {
+
+    if (bleState.connectionStatus === 'connected' && isAuthorized) {
       switch (settingName) {
         case 'kontakOn':
           commandSuccess = await sendRelayCH1Command(newValue);
@@ -118,16 +125,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
           commandSuccess = true;
           break;
       }
-      
+
       if (!commandSuccess) {
         Alert.alert('Error', `Failed to send command to device for ${settingName.replace(/([A-Z])/g, ' $1').trim()}.`);
-        
+
         // Revert the UI state if command failed
         setSettings(settings);
         return;
       }
     }
-    
+
     // Save settings to storage
     saveSettings(updatedSettings);
   };
@@ -149,7 +156,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
           <View style={styles.connectionStatusCard}>
             <View style={styles.connectionStatusRow}>
               <Text style={styles.connectionStatusText}>
-                Device Connection: 
+                Device Connection:
                 <Text style={[
                   styles.connectionStatusValue,
                   bleState.connectionStatus === 'connected' ? styles.connected :
@@ -160,6 +167,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
                 </Text>
               </Text>
             </View>
+
+            {/* Auth Status Indicator */}
+            {bleState.connectionStatus === 'connected' && (
+              <View style={styles.connectionStatusRow}>
+                <Text style={styles.connectionStatusText}>
+                  Authentication:
+                  <Text style={[
+                    styles.connectionStatusValue,
+                    isAuthorized ? styles.connected : styles.connecting
+                  ]}>
+                    {' '}{isAuthorized ? 'Authorized ✓' : 'Pending...'}
+                  </Text>
+                </Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.section}>
@@ -173,7 +195,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
                 onValueChange={() => toggleSetting('kontakOn')}
                 trackColor={{ false: '#767577', true: '#10b981' }}
                 thumbColor={'#f4f4f4'}
-                disabled={bleState.connectionStatus !== 'connected'}
+                disabled={bleState.connectionStatus !== 'connected' || !isAuthorized}
               />
             </View>
 
@@ -185,7 +207,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
                 onValueChange={() => toggleSetting('switchStandar')}
                 trackColor={{ false: '#767577', true: '#10b981' }}
                 thumbColor={'#f4f4f4'}
-                disabled={bleState.connectionStatus !== 'connected'}
+                disabled={bleState.connectionStatus !== 'connected' || !isAuthorized}
               />
             </View>
 
@@ -197,19 +219,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose, bleStat
                 onValueChange={() => toggleSetting('buzzer')}
                 trackColor={{ false: '#767577', true: '#10b981' }}
                 thumbColor={'#f4f4f4'}
-                disabled={bleState.connectionStatus !== 'connected'}
+                disabled={bleState.connectionStatus !== 'connected' || !isAuthorized}
               />
             </View>
 
-            {/* LED */}
+            {/* LED Status */}
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>LED</Text>
+              <Text style={styles.settingLabel}>LED Status</Text>
               <Switch
                 value={settings.statusBypass}
                 onValueChange={() => toggleSetting('statusBypass')}
                 trackColor={{ false: '#767577', true: '#10b981' }}
                 thumbColor={'#f4f4f4'}
-                disabled={bleState.connectionStatus !== 'connected'}
+                disabled={bleState.connectionStatus !== 'connected' || !isAuthorized}
               />
             </View>
           </View>

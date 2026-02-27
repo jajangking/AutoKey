@@ -4,13 +4,34 @@ import { Platform, PermissionsAndroid, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ErrorHandler, ErrorType, withErrorHandler } from '@/utils/errorHandler';
 import { loadAllSettings, saveAllSettings } from '@/utils/settingsManager';
+import {
+  getGlobalConnectedDevice,
+  setGlobalConnectedDevice,
+  getGlobalConnectionStatus,
+  setGlobalConnectionStatus,
+  getGlobalWhitelistEntries,
+  setGlobalWhitelistEntries,
+  getGlobalWhitelistCount
+} from '@/utils/bleGlobalState';
 
 // Define constants for ESP32 services and characteristics
 const ESP32_DEVICE_NAME = 'ESP32_KEYLESS';
-// Using standard UUIDs for demonstration - these would need to match your ESP32 implementation
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const CONTROL_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'; // For sending commands
-const STATUS_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a9'; // For receiving status
+const STATUS_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a9'; // For receiving status updates
+const AUTH_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26aa'; // For authentication
+
+// Auth state
+interface AuthState {
+  isAuthenticated: boolean;
+  authStatus: 'none' | 'pending' | 'authorized' | 'denied' | 'owner_added';
+  deviceToken: string | null; // Device's generated token
+}
+
+// Token storage key
+const DEVICE_TOKEN_KEY = 'device_auth_token';
+const TOKEN_LENGTH = 32; // 32 character hex token
+const MAX_WHITELIST = 5; // Max tokens in ESP32 whitelist
 
 // Initialize BLE manager inside the hook to ensure it's created in the right context
 
@@ -41,8 +62,26 @@ interface BLEState {
 
 export const useBLE = () => {
   const bleManagerRef = useRef<BleManager | null>(null);
-  const connectedDeviceRef = useRef<Device | null>(null); // Store actual Device instance in useRef
+  const connectedDeviceRef = useRef<Device | null>(getGlobalConnectedDevice());
   const [managerInitialized, setManagerInitialized] = useState(false);
+
+  // Auth state ref
+  const authStateRef = useRef<AuthState>({
+    isAuthenticated: false,
+    authStatus: 'none',
+    deviceMac: null
+  });
+
+  // Whitelist entries - use global cache for persistence across navigation
+  const whitelistEntriesRef = useRef<string[]>(getGlobalWhitelistEntries());
+  const whitelistCountRef = useRef<number>(getGlobalWhitelistCount());
+  
+  // State for UI rendering (synced from refs and global cache)
+  const [whitelistEntries, setWhitelistEntries] = useState<string[]>(getGlobalWhitelistEntries());
+  const [whitelistCount, setWhitelistCount] = useState<number>(getGlobalWhitelistCount());
+
+  // Sync with global connection status
+  const [globalConnStatus, setGlobalConnStatusState] = useState(getGlobalConnectionStatus());
 
   // Add log entry
   const addLog = useCallback((message: string) => {
@@ -559,14 +598,23 @@ export const useBLE = () => {
             scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
               ? prev.scannedDevices.map(d =>
                   d.id === connectedDevice.id ? connectedDevice : d
-                ) // Update existing device with fresh data
-              : [...prev.scannedDevices, connectedDevice] // Add device to array
+                )
+              : [...prev.scannedDevices, connectedDevice]
           }));
+          // Update global state
+          connectedDeviceRef.current = connectedDevice;
+          setGlobalConnectedDevice(connectedDevice);
+          setGlobalConnectionStatus('connected');
+          setGlobalConnStatusState('connected');
 
           addLog(`Connected to ${connectedDevice.name || connectedDevice.id}`);
 
-          // Subscribe to status notifications
-          subscribeToStatusNotifications(connectedDevice);
+          // DISABLED: Subscribe to status notifications - causes native crash
+          // subscribeToStatusNotifications(connectedDevice);
+          addLog('Status notifications disabled (library bug workaround)');
+
+          // Auto-authenticate after connection
+          authenticateToDevice(connectedDevice);
         } catch (discoverErr) {
           addLog(`Failed to discover services: ${(discoverErr as Error).message}`);
 
@@ -584,11 +632,23 @@ export const useBLE = () => {
             scannedDevices: prev.scannedDevices.some(d => d.id === connectedDevice.id)
               ? prev.scannedDevices.map(d =>
                   d.id === connectedDevice.id ? connectedDevice : d
-                ) // Update existing device with fresh data
-              : [...prev.scannedDevices, connectedDevice] // Add device to array
+                )
+              : [...prev.scannedDevices, connectedDevice]
           }));
+          // Update global state
+          connectedDeviceRef.current = connectedDevice;
+          setGlobalConnectedDevice(connectedDevice);
+          setGlobalConnectionStatus('connected');
+          setGlobalConnStatusState('connected');
 
           addLog(`Connected to ${connectedDevice.name || connectedDevice.id} (with limited functionality)`);
+
+          // DISABLED: Subscribe to status notifications - causes native crash
+          // subscribeToStatusNotifications(connectedDevice);
+          addLog('Status notifications disabled (library bug workaround)');
+
+          // Auto-authenticate after connection (even with limited functionality)
+          authenticateToDevice(connectedDevice);
         }
       } catch (err) {
         // Handle the specific error that causes the crash
@@ -641,8 +701,110 @@ export const useBLE = () => {
     }
   }, [state.connectionStatus, state.isScanning, addLog, managerInitialized, state.autoConnectEnabled]);
 
-  // Subscribe to status notifications
+  // Authenticate to ESP32 using device token
+  const authenticateToDevice = useCallback(async (device: Device) => {
+    // Guard: Validate device
+    if (!device || !device.id) {
+      addLog('Invalid device for authentication');
+      return;
+    }
+
+    if (!bleManagerRef.current) {
+      addLog('BLE Manager not initialized for auth');
+      return;
+    }
+
+    try {
+      // Get or generate token
+      let token = authStateRef.current.deviceToken;
+      
+      if (!token) {
+        // Try load from storage
+        const storedToken = await AsyncStorage.getItem(DEVICE_TOKEN_KEY);
+        
+        if (storedToken) {
+          token = storedToken;
+          addLog('Loaded existing token from storage');
+        } else {
+          // Generate new token (32 char hex string)
+          token = generateToken();
+          await AsyncStorage.setItem(DEVICE_TOKEN_KEY, token);
+          addLog('Generated new auth token');
+        }
+        
+        authStateRef.current = {
+          ...authStateRef.current,
+          deviceToken: token
+        };
+      }
+
+      addLog(`Authenticating with token (${token.length} chars)`);
+
+      // Send token to AUTH characteristic
+      const tokenBytes = [];
+      for (let i = 0; i < token.length; i++) {
+        tokenBytes.push(token.charCodeAt(i));
+      }
+
+      const authData = btoa(String.fromCharCode(...tokenBytes));
+
+      // Write to AUTH characteristic
+      await device.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        AUTH_CHARACTERISTIC_UUID,
+        authData
+      );
+
+      addLog('Auth token sent to ESP32 - waiting for response...');
+
+      // Wait briefly for ESP32 to process auth
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Assume authorized since ESP32 auto-adds first token or token is in whitelist
+      // ESP32 will disconnect if DENIED, so if we're still connected, assume success
+      authStateRef.current = {
+        ...authStateRef.current,
+        isAuthenticated: true,
+        authStatus: 'authorized'
+      };
+      
+      addLog('Auth status: Authorized (assumed)');
+
+    } catch (error) {
+      const authErrorMsg = (error as Error)?.message || 'Unknown error';
+      addLog(`Authentication failed: ${authErrorMsg}`);
+
+      authStateRef.current = {
+        ...authStateRef.current,
+        isAuthenticated: false,
+        authStatus: 'denied'
+      };
+
+      // Check if it's the known bug
+      if (authErrorMsg.includes('Parameter specified as non-null is null')) {
+        addLog('Auth error: Known library bug - may still work');
+      }
+    }
+  }, [addLog]);
+
+  // Generate random token (32 char hex string)
+  const generateToken = useCallback((): string => {
+    const chars = '0123456789ABCDEF';
+    let token = '';
+    for (let i = 0; i < TOKEN_LENGTH; i++) {
+      token += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return token;
+  }, []);
+
+  // Subscribe to status notifications - ONCE per connection, not per page
+  // This prevents the native crash when unmounting components
   const subscribeToStatusNotifications = useCallback(async (device: Device) => {
+    // Guard: Don't create duplicate subscriptions
+    if (statusSubscriptionRef.current) {
+      addLog('Subscription already exists - skipping');
+      return;
+    }
     // Guard: Validate device parameter
     if (!device || !device.id) {
       addLog('Invalid device for subscription: device or device.id is null/undefined');
@@ -654,16 +816,30 @@ export const useBLE = () => {
       return;
     }
 
+    // Whitelist read state - use refs to persist across callback invocations
+    const wlReadState = {
+      isReading: false,
+      expectedCount: -1,
+      receivedEntries: [] as string[],
+      lastReadTime: 0
+    };
+
     try {
-      // First, unsubscribe from any existing subscription
-      if (statusSubscriptionRef.current) {
-        try {
-          statusSubscriptionRef.current.remove();
-        } catch (unsubscribeError) {
-          addLog(`Error unsubscribing from previous notifications: ${(unsubscribeError as Error)?.message || 'Unknown error'}`);
-        }
-        statusSubscriptionRef.current = null;
-      }
+      // NOTE: Skip unsubscribe - causes native crash in react-native-ble-plx
+      // Just replace the reference and let OS cleanup old subscription
+      // if (statusSubscriptionRef.current) {
+      //   try {
+      //     const oldSubscription = statusSubscriptionRef.current;
+      //     statusSubscriptionRef.current = null;
+      //     oldSubscription.remove();
+      //     addLog('Previous subscription removed');
+      //   } catch (unsubscribeError) {
+      //     const unsubscribeErrorMsg = (unsubscribeError as Error)?.message || 'Unknown error';
+      //     if (!unsubscribeErrorMsg.includes('Parameter specified as non-null is null')) {
+      //       addLog(`Error unsubscribing from previous notifications: ${unsubscribeErrorMsg}`);
+      //     }
+      //   }
+      // }
 
       // Subscribe to status characteristic notifications
       const subscription = device.monitorCharacteristicForService(
@@ -671,7 +847,6 @@ export const useBLE = () => {
         STATUS_CHARACTERISTIC_UUID,
         (error: BleError | null, characteristic: any | null) => {
           if (error) {
-            // Handle the specific error that causes the crash
             let notificationErrorMessage = error.message || 'Unknown error';
             if (notificationErrorMessage.includes('Parameter specified as non-null is null')) {
               notificationErrorMessage = 'Notification error: A known error occurred. This is probably a bug!';
@@ -682,24 +857,118 @@ export const useBLE = () => {
 
           if (characteristic?.value) {
             try {
-              // Process the received status data
-              // Convert base64 value to bytes
               const buffer = Uint8Array.from(atob(characteristic.value), c => c.charCodeAt(0));
 
-              if (buffer.length >= 1) {
-                const statusByte = buffer[0];
-
-                setState(prev => ({
-                  ...prev,
-                  contactStatus: (statusByte & 1) !== 0,
-                  ledStatus: {
-                    btConnected: prev.ledStatus.btConnected,
-                    ready: (statusByte & 2) !== 0,
-                    wifi: (statusByte & 4) !== 0
+              // Handle auth response strings FIRST (check if it's a string response)
+              if (buffer.length > 1) {
+                try {
+                  const responseString = atob(characteristic.value);
+                  
+                  // Check for known auth/system responses
+                  if (['AUTHORIZED', 'DENIED', 'OWNER_ADDED', 'WL_CLEARED', 'UNKNOWN', 'NOT_AUTH'].includes(responseString)) {
+                    if (responseString === 'AUTHORIZED') {
+                      addLog('Auth: AUTHORIZED ✓');
+                      authStateRef.current = { ...authStateRef.current, isAuthenticated: true, authStatus: 'authorized' };
+                    } else if (responseString === 'DENIED') {
+                      addLog('Auth: DENIED ❌');
+                      authStateRef.current = { ...authStateRef.current, isAuthenticated: false, authStatus: 'denied' };
+                    } else if (responseString === 'OWNER_ADDED') {
+                      addLog('Auth: OWNER_ADDED ✓');
+                      authStateRef.current = { ...authStateRef.current, isAuthenticated: true, authStatus: 'owner_added' };
+                    } else if (responseString === 'WL_CLEARED') {
+                      addLog('Whitelist: CLEARED');
+                    } else if (responseString === 'UNKNOWN') {
+                      addLog('Response: UNKNOWN command');
+                    } else if (responseString === 'NOT_AUTH') {
+                      addLog('Response: NOT AUTHORIZED');
+                    }
+                    return; // Done processing auth response
                   }
-                }));
+                } catch (decodeError) {
+                  // Not a string, continue to binary processing
+                }
+              }
 
-                addLog(`Received status: Contact=${!!(statusByte & 1)}, Ready=${!!(statusByte & 2)}, WiFi=${!!(statusByte & 4)}`);
+              // Handle whitelist read response (0xF4)
+              if (buffer.length >= 1) {
+                const now = Date.now();
+                
+                // Check if this looks like a whitelist response (single byte = count, or multi-byte with index/len)
+                const isWhitelistResponse = 
+                  (buffer.length === 1 && buffer[0] <= MAX_WHITELIST) || // Count byte
+                  (buffer.length >= 2 && buffer[0] < MAX_WHITELIST && buffer[1] <= 32); // Index + len
+
+                if (isWhitelistResponse) {
+                  wlReadState.lastReadTime = now;
+                  
+                  // First notification: count
+                  if (buffer.length === 1) {
+                    wlReadState.expectedCount = buffer[0];
+                    wlReadState.receivedEntries = [];
+                    wlReadState.isReading = true;
+                    addLog(`Whitelist count: ${wlReadState.expectedCount}`);
+                    
+                    // Update ref, state, and global cache
+                    whitelistCountRef.current = buffer[0];
+                    setWhitelistCount(buffer[0]);
+                    setGlobalWhitelistCount(buffer[0]);
+                    
+                    if (wlReadState.expectedCount === 0) {
+                      addLog('Whitelist is empty');
+                      wlReadState.isReading = false;
+                      whitelistEntriesRef.current = [];
+                      setWhitelistEntries([]);
+                      setGlobalWhitelistEntries([]);
+                      console.log('[Whitelist] Entries: []');
+                    }
+                    return;
+                  }
+                  
+                  // Entry notifications: [index][len][token...]
+                  if (wlReadState.isReading && buffer.length >= 2) {
+                    const index = buffer[0];
+                    const tokenLen = buffer[1];
+                    
+                    if (tokenLen > 0 && tokenLen <= 32) {
+                      let token = '';
+                      for (let i = 0; i < tokenLen && i < 32; i++) {
+                        token += String.fromCharCode(buffer[2 + i]);
+                      }
+                      wlReadState.receivedEntries.push(token);
+                      addLog(`Token #${index + 1}: ${token.substring(0, 8)}...`);
+                      
+                      if (wlReadState.receivedEntries.length >= wlReadState.expectedCount && wlReadState.expectedCount > 0) {
+                        addLog(`Whitelist read complete: ${wlReadState.receivedEntries.length} entries`);
+                        wlReadState.isReading = false;
+                        
+                        // Update ref, state, and global cache
+                        whitelistEntriesRef.current = wlReadState.receivedEntries;
+                        whitelistCountRef.current = wlReadState.receivedEntries.length;
+                        setWhitelistEntries(wlReadState.receivedEntries);
+                        setWhitelistCount(wlReadState.receivedEntries.length);
+                        setGlobalWhitelistEntries(wlReadState.receivedEntries);
+                        
+                        console.log('[Whitelist] All entries:', wlReadState.receivedEntries);
+                      }
+                      return;
+                    }
+                  }
+                }
+
+                // Single byte status (not whitelist response)
+                if (buffer.length === 1 && wlReadState.expectedCount === -1) {
+                  const statusByte = buffer[0];
+                  setState(prev => ({
+                    ...prev,
+                    contactStatus: (statusByte & 1) !== 0,
+                    ledStatus: {
+                      btConnected: prev.ledStatus.btConnected,
+                      ready: (statusByte & 2) !== 0,
+                      wifi: (statusByte & 4) !== 0
+                    }
+                  }));
+                  addLog(`Status: Contact=${!!(statusByte & 1)}, Ready=${!!(statusByte & 2)}, WiFi=${!!(statusByte & 4)}`);
+                }
               }
             } catch (processError) {
               addLog(`Error processing notification: ${(processError as Error)?.message || 'Unknown error'}`);
@@ -708,21 +977,19 @@ export const useBLE = () => {
         }
       );
 
-      // Store reference to subscription for cleanup
       statusSubscriptionRef.current = subscription;
       addLog('Subscribed to status notifications');
     } catch (err) {
-      // Handle the specific error that causes the crash
       let subscribeErrorMessage = '';
       if (err instanceof Error) {
         subscribeErrorMessage = err.message || 'Unknown error';
         if (subscribeErrorMessage.includes('Parameter specified as non-null is null')) {
-          subscribeErrorMessage = 'Failed to subscribe to notifications: A known error occurred. This is probably a bug!';
+          subscribeErrorMessage = 'Failed to subscribe: Known library bug';
         }
       } else {
-        subscribeErrorMessage = 'Failed to subscribe to notifications: A known error occurred. This is probably a bug!';
+        subscribeErrorMessage = 'Failed to subscribe: Unknown error';
       }
-      addLog(`Failed to subscribe to notifications: ${subscribeErrorMessage}`);
+      addLog(`Failed to subscribe: ${subscribeErrorMessage}`);
     }
   }, [addLog]);
 
@@ -844,20 +1111,44 @@ export const useBLE = () => {
     }
 
     try {
-      // Remove notification subscription
+      // Remove notification subscription - guard against double removal
       if (statusSubscriptionRef.current) {
         try {
-          statusSubscriptionRef.current.remove();
+          const subscription = statusSubscriptionRef.current;
+          statusSubscriptionRef.current = null; // Clear ref first to prevent double removal
+          subscription.remove();
+          addLog('Notification subscription removed');
         } catch (unsubscribeError) {
-          addLog(`Error removing notification subscription: ${(unsubscribeError as Error)?.message || 'Unknown error'}`);
+          // Ignore errors during unsubscribe - this is a known bug in react-native-ble-plx
+          const errorMsg = (unsubscribeError as Error)?.message || 'Unknown error';
+          if (!errorMsg.includes('Parameter specified as non-null is null')) {
+            addLog(`Error removing notification subscription: ${errorMsg}`);
+          } else {
+            addLog('Subscription cleanup completed (known library bug ignored)');
+          }
         }
-        statusSubscriptionRef.current = null;
       }
 
-      await bleManagerRef.current.cancelDeviceConnection(state.connectedDeviceId);
+      // Cancel device connection
+      try {
+        await bleManagerRef.current.cancelDeviceConnection(state.connectedDeviceId);
+        addLog(`Disconnected from device ID: ${state.connectedDeviceId}`);
+      } catch (disconnectError) {
+        const disconnectErrorMsg = (disconnectError as Error)?.message || 'Unknown error';
+        // Ignore known bug in react-native-ble-plx
+        if (disconnectErrorMsg.includes('Parameter specified as non-null is null')) {
+          addLog('Device disconnection completed (known library bug ignored)');
+        } else {
+          addLog(`Disconnect error: ${disconnectErrorMsg}`);
+          throw disconnectError; // Re-throw if it's a different error
+        }
+      }
 
       // Clear the device reference
       connectedDeviceRef.current = null;
+      setGlobalConnectedDevice(null);
+      setGlobalConnectionStatus('disconnected');
+      setGlobalConnStatusState('disconnected');
 
       // Update state to reflect disconnection
       setState(prev => ({
@@ -867,9 +1158,7 @@ export const useBLE = () => {
         ledStatus: { btConnected: false, ready: false, wifi: false },
         contactStatus: false
       }));
-      addLog(`Disconnected from device ID: ${state.connectedDeviceId}`);
       // Don't treat intentional disconnections as errors
-      // ErrorHandler.handleError(ErrorType.DISCONNECTED, `Disconnected from device ID: ${state.connectedDeviceId}`);
     } catch (err) {
       // Handle the specific error that causes the crash
       let disconnectErrorMessage = '';
@@ -882,7 +1171,10 @@ export const useBLE = () => {
         disconnectErrorMessage = 'Disconnect error: A known error occurred. This is probably a bug!';
       }
       addLog(disconnectErrorMessage);
-      ErrorHandler.handleError(ErrorType.UNKNOWN, disconnectErrorMessage, err);
+      // Don't propagate error for known bug
+      if (!disconnectErrorMessage.includes('A known error occurred')) {
+        ErrorHandler.handleError(ErrorType.UNKNOWN, disconnectErrorMessage, err);
+      }
     }
   }, [state.connectedDeviceId, addLog, managerInitialized]);
 
@@ -935,9 +1227,15 @@ export const useBLE = () => {
 
     return () => {
       try {
-        subscription?.remove();
+        if (subscription) {
+          subscription.remove();
+        }
       } catch (cleanupError) {
-        addLog(`Error cleaning up disconnection subscription: ${(cleanupError as Error)?.message || 'Unknown error'}`);
+        const cleanupErrorMsg = (cleanupError as Error)?.message || 'Unknown error';
+        // Ignore known bug in react-native-ble-plx
+        if (!cleanupErrorMsg.includes('Parameter specified as non-null is null')) {
+          addLog(`Error cleaning up disconnection subscription: ${cleanupErrorMsg}`);
+        }
       }
     };
   }, [state.connectedDeviceId, startScan, addLog, managerInitialized]);
@@ -1422,7 +1720,11 @@ export const useBLE = () => {
           subscription.remove();
         }
       } catch (cleanupError) {
-        addLog(`Error cleaning up Bluetooth state subscription: ${(cleanupError as Error)?.message || 'Unknown error'}`);
+        const cleanupErrorMsg = (cleanupError as Error)?.message || 'Unknown error';
+        // Ignore known bug in react-native-ble-plx
+        if (!cleanupErrorMsg.includes('Parameter specified as non-null is null')) {
+          addLog(`Error cleaning up Bluetooth state subscription: ${cleanupErrorMsg}`);
+        }
       }
       lastBluetoothState = null;
       lastScanAttemptTime = null;
@@ -1453,14 +1755,23 @@ export const useBLE = () => {
         try {
           bleManagerRef.current.stopDeviceScan();
         } catch (scanStopError) {
-          addLog(`Error stopping scan during cleanup: ${(scanStopError as Error)?.message || 'Unknown error'}`);
+          const scanStopErrorMsg = (scanStopError as Error)?.message || 'Unknown error';
+          if (!scanStopErrorMsg.includes('Parameter specified as non-null is null')) {
+            addLog(`Error stopping scan during cleanup: ${scanStopErrorMsg}`);
+          }
         }
       }
+      // Remove subscription - guard against double removal
       if (statusSubscriptionRef.current) {
         try {
-          statusSubscriptionRef.current.remove();
+          const subscription = statusSubscriptionRef.current;
+          statusSubscriptionRef.current = null; // Clear ref first
+          subscription.remove();
         } catch (subscriptionRemoveError) {
-          addLog(`Error removing subscription during cleanup: ${(subscriptionRemoveError as Error)?.message || 'Unknown error'}`);
+          const subscriptionErrorMsg = (subscriptionRemoveError as Error)?.message || 'Unknown error';
+          if (!subscriptionErrorMsg.includes('Parameter specified as non-null is null')) {
+            addLog(`Error removing subscription during cleanup: ${subscriptionErrorMsg}`);
+          }
         }
       }
     };
@@ -1613,41 +1924,332 @@ const resetScannedDevices = useCallback(() => {
         try {
           bleManagerRef.current.stopDeviceScan();
         } catch (error) {
-          console.log('Error stopping scan during cleanup:', (error as Error).message);
+          const scanStopErrorMsg = (error as Error).message || 'Unknown error';
+          if (!scanStopErrorMsg.includes('Parameter specified as non-null is null')) {
+            console.log('Error stopping scan during cleanup:', scanStopErrorMsg);
+          }
         }
       }
 
-      // Remove any active status subscription
-      if (statusSubscriptionRef.current) {
-        try {
-          statusSubscriptionRef.current.remove();
-        } catch (error) {
-          console.log('Error removing status subscription during cleanup:', (error as Error).message);
-        }
-        statusSubscriptionRef.current = null;
-      }
+      // NOTE: Don't remove subscription on unmount - causes native crash in react-native-ble-plx
+      // The OS will clean up BLE resources automatically when app unmounts
+      // if (statusSubscriptionRef.current) {
+      //   try {
+      //     statusSubscriptionRef.current.remove();
+      //   } catch (error) {
+      //     // Ignore known bug
+      //   }
+      //   statusSubscriptionRef.current = null;
+      // }
 
-      // Disconnect from device if connected
+      // Disconnect from device if connected (but don't wait for completion)
       if (state.connectionStatus === 'connected' && state.connectedDeviceId && bleManagerRef.current) {
         try {
+          // Fire and forget - don't wait for promise
           bleManagerRef.current.cancelDeviceConnection(state.connectedDeviceId);
         } catch (error) {
-          console.log('Error disconnecting device during cleanup:', (error as Error).message);
+          // Ignore known bug in cancelDeviceConnection
+          const disconnectErrorMsg = (error as Error).message || 'Unknown error';
+          if (!disconnectErrorMsg.includes('Parameter specified as non-null is null')) {
+            console.log('Error disconnecting during cleanup:', disconnectErrorMsg);
+          }
         }
       }
 
       // Don't destroy BLE manager on unmount - it causes native crash on Android
       // The OS will clean up BLE resources automatically when app exits
-      // if (bleManagerRef.current) {
-      //   try {
-      //     bleManagerRef.current.destroy();
-      //   } catch (error) {
-      //     console.log('Error destroying BLE manager during cleanup:', (error as Error).message);
-      //   }
-      //   bleManagerRef.current = null;
-      // }
     };
   }, []);
+
+  // ==================== WHITELIST MANAGEMENT ====================
+
+  // Sync local whitelist to ESP32
+  const syncWhitelistToESP32 = useCallback(async (bleAddresses: string[]): Promise<{ success: boolean; synced: number; failed: number }> => {
+    console.log('[Whitelist Sync] === START SYNC ===');
+    console.log('[Whitelist Sync] Global connection status:', globalConnStatus);
+    console.log('[Whitelist Sync] Device ref exists:', !!connectedDeviceRef.current);
+    
+    if (globalConnStatus !== 'connected') {
+      addLog('Not connected to ESP32 - cannot sync whitelist');
+      console.error('[Whitelist Sync] Not connected!');
+      return { success: false, synced: 0, failed: 0 };
+    }
+
+    if (!connectedDeviceRef.current) {
+      addLog('No connected device reference available');
+      console.error('[Whitelist Sync] No device ref!');
+      return { success: false, synced: 0, failed: 0 };
+    }
+
+    let synced = 0;
+    let failed = 0;
+
+    try {
+      // First, clear ESP32 whitelist
+      addLog('Clearing ESP32 whitelist...');
+      console.log('[Whitelist Sync] Sending clear command (0xF2)...');
+      const clearBuffer = new Uint8Array([0xF2]);
+      const clearData = btoa(String.fromCharCode(...clearBuffer));
+      
+      await connectedDeviceRef.current.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        CONTROL_CHARACTERISTIC_UUID,
+        clearData
+      );
+      
+      console.log('[Whitelist Sync] Clear command sent successfully');
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Send each MAC address to ESP32
+      addLog(`Syncing ${bleAddresses.length} devices to ESP32...`);
+      console.log('[Whitelist Sync] MAC addresses to sync:', bleAddresses);
+
+      for (const mac of bleAddresses) {
+        try {
+          // Check if still connected
+          const stillConnected = await connectedDeviceRef.current.isConnected();
+          if (!stillConnected) {
+            console.error('[Whitelist Sync] Device disconnected during sync!');
+            addLog('Device disconnected during sync');
+            break;
+          }
+
+          // Send MAC as ASCII string (firmware expects string format)
+          // Command 0xFE + MAC string bytes
+          const macBytes = [0xFE];
+          for (let i = 0; i < mac.length; i++) {
+            macBytes.push(mac.charCodeAt(i));
+          }
+
+          const extendedBuffer = new Uint8Array(macBytes);
+          const extendedData = btoa(String.fromCharCode(...extendedBuffer));
+
+          console.log(`[Whitelist Sync] Sending MAC ${mac}:`, extendedData);
+          
+          await connectedDeviceRef.current.writeCharacteristicWithResponseForService(
+            SERVICE_UUID,
+            CONTROL_CHARACTERISTIC_UUID,
+            extendedData
+          );
+
+          console.log(`[Whitelist Sync] MAC ${mac} sent successfully`);
+          await new Promise(resolve => setTimeout(resolve, 150));
+          synced++;
+          addLog(`Synced MAC: ${mac}`);
+        } catch (err) {
+          failed++;
+          console.error(`[Whitelist Sync] Failed to sync MAC ${mac}:`, err);
+          addLog(`Failed to sync MAC ${mac}: ${(err as Error).message}`);
+        }
+      }
+
+      addLog(`Whitelist sync complete: ${synced} synced, ${failed} failed`);
+      console.log('[Whitelist Sync] Complete - synced:', synced, 'failed:', failed);
+      return { success: synced > 0, synced, failed };
+    } catch (error) {
+      console.error('[Whitelist Sync] Exception:', error);
+      addLog(`Whitelist sync failed: ${(error as Error).message}`);
+      return { success: false, synced, failed };
+    }
+  }, [addLog, globalConnStatus]);
+
+  // Get ESP32 whitelist count
+  const getESP32WhitelistCount = useCallback(async (): Promise<number> => {
+    console.log('[Get WL Count] Global connection status:', globalConnStatus);
+
+    if (globalConnStatus !== 'connected') {
+      addLog('Not connected to ESP32 - cannot get whitelist count');
+      return 0;
+    }
+
+    if (!connectedDeviceRef.current) {
+      addLog('No device ref available');
+      return 0;
+    }
+
+    try {
+      const countBuffer = new Uint8Array([0xF3]);
+      const countData = btoa(String.fromCharCode(...countBuffer));
+
+      await connectedDeviceRef.current.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        CONTROL_CHARACTERISTIC_UUID,
+        countData
+      );
+
+      addLog('Whitelist count request sent (0xF3)');
+      
+      // Note: Count is returned via STATUS characteristic notification
+      return -1; // Return -1 to indicate request sent
+    } catch (error) {
+      addLog(`Failed to get whitelist count: ${(error as Error).message}`);
+      return 0;
+    }
+  }, [addLog, globalConnStatus]);
+
+  // Read ESP32 whitelist entries - Temporary subscription (read then cleanup)
+  const readESP32Whitelist = useCallback(async (): Promise<string[]> => {
+    console.log('[Read WL] Global connection status:', globalConnStatus);
+
+    if (globalConnStatus !== 'connected') {
+      addLog('Not connected to ESP32 - cannot read whitelist');
+      return [];
+    }
+
+    if (!connectedDeviceRef.current) {
+      addLog('No device ref available');
+      return [];
+    }
+
+    // Temporary whitelist read state
+    let expectedCount = -1;
+    let receivedEntries: string[] = [];
+    let subscription: any = null;
+    let isComplete = false;
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        if (!isComplete) {
+          addLog('Whitelist read timeout');
+          isComplete = true;
+          // DON'T remove subscription - causes crash
+          resolve([]);
+        }
+      }, 5000); // 5 second timeout
+
+      try {
+        // Subscribe temporarily
+        subscription = connectedDeviceRef.current.monitorCharacteristicForService(
+          SERVICE_UUID,
+          STATUS_CHARACTERISTIC_UUID,
+          (error: BleError | null, characteristic: any | null) => {
+            if (error || isComplete) {
+              // Ignore errors and already completed
+              return;
+            }
+
+            if (characteristic?.value) {
+              try {
+                const buffer = Uint8Array.from(atob(characteristic.value), c => c.charCodeAt(0));
+
+                // First notification: count
+                if (buffer.length === 1 && expectedCount === -1) {
+                  expectedCount = buffer[0];
+                  addLog(`Whitelist count: ${expectedCount}`);
+                  
+                  if (expectedCount === 0) {
+                    isComplete = true;
+                    clearTimeout(timeout);
+                    setWhitelistCount(0);
+                    setWhitelistEntries([]);
+                    setGlobalWhitelistEntries([]);
+                    // DON'T remove subscription - causes crash
+                    resolve([]);
+                  }
+                  return;
+                }
+
+                // Entry notifications: [index][len][token...]
+                if (expectedCount >= 0 && buffer.length >= 2) {
+                  const index = buffer[0];
+                  const tokenLen = buffer[1];
+
+                  if (tokenLen > 0 && tokenLen <= 32) {
+                    let token = '';
+                    for (let i = 0; i < tokenLen && i < 32; i++) {
+                      token += String.fromCharCode(buffer[2 + i]);
+                    }
+                    receivedEntries.push(token);
+                    addLog(`Token #${index + 1}: ${token.substring(0, 8)}...`);
+
+                    // All entries received
+                    if (receivedEntries.length >= expectedCount) {
+                      isComplete = true;
+                      clearTimeout(timeout);
+                      addLog(`Whitelist read complete: ${receivedEntries.length} entries`);
+
+                      // Update state
+                      setWhitelistCount(receivedEntries.length);
+                      setWhitelistEntries(receivedEntries);
+                      setGlobalWhitelistEntries(receivedEntries);
+
+                      // DON'T remove subscription - causes native crash
+                      // Let OS cleanup automatically when connection closes
+                      resolve(receivedEntries);
+                    }
+                  }
+                }
+              } catch (processError) {
+                // Ignore processing errors
+              }
+            }
+          }
+        );
+
+        // Send read command
+        addLog('Sending 0xF4 command to read whitelist...');
+        const readBuffer = new Uint8Array([0xF4]);
+        const readData = btoa(String.fromCharCode(...readBuffer));
+
+        connectedDeviceRef.current.writeCharacteristicWithResponseForService(
+          SERVICE_UUID,
+          CONTROL_CHARACTERISTIC_UUID,
+          readData
+        ).catch((writeError) => {
+          if (!isComplete) {
+            isComplete = true;
+            clearTimeout(timeout);
+            addLog(`Write error: ${(writeError as Error).message}`);
+            // DON'T remove subscription
+            resolve([]);
+          }
+        });
+
+      } catch (error) {
+        if (!isComplete) {
+          isComplete = true;
+          clearTimeout(timeout);
+          addLog(`Failed to read whitelist: ${(error as Error).message}`);
+          // DON'T remove subscription
+          resolve([]);
+        }
+      }
+    });
+  }, [addLog, globalConnStatus]);
+
+  // Clear ESP32 whitelist
+  const clearESP32Whitelist = useCallback(async (): Promise<boolean> => {
+    console.log('[Clear WL] Global connection status:', globalConnStatus);
+    
+    if (globalConnStatus !== 'connected') {
+      addLog('Not connected to ESP32 - cannot clear whitelist');
+      return false;
+    }
+
+    if (!connectedDeviceRef.current) {
+      addLog('No device ref available');
+      return false;
+    }
+
+    try {
+      const clearBuffer = new Uint8Array([0xF2]);
+      const clearData = btoa(String.fromCharCode(...clearBuffer));
+
+      await connectedDeviceRef.current.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        CONTROL_CHARACTERISTIC_UUID,
+        clearData
+      );
+
+      addLog('ESP32 whitelist cleared');
+      return true;
+    } catch (error) {
+      addLog(`Failed to clear ESP32 whitelist: ${(error as Error).message}`);
+      return false;
+    }
+  }, [addLog, globalConnStatus]);
+
+  // ==================== END WHITELIST MANAGEMENT ====================
 
   return {
     state,
@@ -1669,6 +2271,15 @@ const resetScannedDevices = useCallback(() => {
     clearSelectedDevice,
     toggleAutoConnect,
     attemptAutoConnect,
-    resetScannedDevices
+    resetScannedDevices,
+    authenticateToDevice,
+    generateToken,
+    // Whitelist management
+    whitelistEntries,
+    whitelistCount,
+    syncWhitelistToESP32,
+    getESP32WhitelistCount,
+    readESP32Whitelist,
+    clearESP32Whitelist
   };
 };
